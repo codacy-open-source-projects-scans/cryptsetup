@@ -2496,7 +2496,7 @@ int crypt_format_luks2_opal(struct crypt_device *cd,
 			(device_size_bytes - range_size_bytes) / SECTOR_SIZE);
 
 	if (cipher) {
-		r = LUKS2_check_encryption_sector(cd, device_size_bytes, data_offset_bytes, sector_size,
+		r = LUKS2_check_encryption_sector(cd, range_size_bytes, data_offset_bytes, sector_size,
 						  sector_size_autodetect, integrity == NULL,
 						  &sector_size);
 		if (r < 0)
@@ -2517,7 +2517,7 @@ int crypt_format_luks2_opal(struct crypt_device *cd,
 			       sector_size,
 			       data_offset_bytes,
 			       metadata_size_bytes, keyslots_size_bytes,
-			       device_size_bytes,
+			       range_size_bytes,
 			       opal_segment_number,
 			       opal_params->user_key_size);
 	if (r < 0)
@@ -2556,7 +2556,8 @@ int crypt_format_luks2_opal(struct crypt_device *cd,
 
 	r = opal_setup_ranges(cd, crypt_data_device(cd), user_key ?: cd->volume_key,
 					range_offset_blocks, range_size_bytes / opal_block_bytes,
-					opal_segment_number, opal_params->admin_key, opal_params->admin_key_size);
+					opal_block_bytes, opal_segment_number,
+					opal_params->admin_key, opal_params->admin_key_size);
 	if (r < 0) {
 		if (r == -EPERM)
 			log_err(cd, _("Incorrect OPAL Admin key."));
@@ -5327,7 +5328,8 @@ static int _activate_luks2_by_volume_key(struct crypt_device *cd,
 		}
 		r = _open_and_activate_reencrypt_device_by_vk(cd, &cd->u.luks2.hdr, name, vk, flags);
 	} else {
-		assert(crypt_volume_key_get_id(vk) == LUKS2_digest_by_segment(&cd->u.luks2.hdr, CRYPT_DEFAULT_SEGMENT));
+		/* hw-opal data segment type does not require volume key for activation */
+		assert(!vk || crypt_volume_key_get_id(vk) == LUKS2_digest_by_segment(&cd->u.luks2.hdr, CRYPT_DEFAULT_SEGMENT));
 		r = LUKS2_activate(cd, name, vk, external_key, flags);
 	}
 
