@@ -325,9 +325,9 @@ static int process_key(struct crypt_device *cd, const char *hash_name,
 			return -EINVAL;
 		}
 	} else if (passLen > key_size) {
-		memcpy((*vk)->key, pass, key_size);
+		crypt_safe_memcpy((*vk)->key, pass, key_size);
 	} else {
-		memcpy((*vk)->key, pass, passLen);
+		crypt_safe_memcpy((*vk)->key, pass, passLen);
 	}
 
 	return 0;
@@ -1790,6 +1790,12 @@ static int _crypt_format_luks1(struct crypt_device *cd,
 		return -EINVAL;
 	}
 
+	if (device_is_zoned(crypt_metadata_device(cd)) > 0) {
+		log_err(cd, _("Zoned device %s cannot be used for LUKS header."),
+			device_path(crypt_metadata_device(cd)));
+		return -EINVAL;
+	}
+
 	if (params && cd->data_offset && params->data_alignment &&
 	   (cd->data_offset % params->data_alignment)) {
 		log_err(cd, _("Requested data alignment is not compatible with data offset."));
@@ -2024,6 +2030,12 @@ static int _crypt_format_luks2(struct crypt_device *cd,
 
 	if (!crypt_metadata_device(cd)) {
 		log_err(cd, _("Can't format LUKS without device."));
+		return -EINVAL;
+	}
+
+	if (device_is_zoned(crypt_metadata_device(cd)) > 0) {
+		log_err(cd, _("Zoned device %s cannot be used for LUKS header."),
+			device_path(crypt_metadata_device(cd)));
 		return -EINVAL;
 	}
 
@@ -5465,7 +5477,7 @@ static int _activate_loopaes(struct crypt_device *cd,
 	buffer_copy = crypt_safe_alloc(buffer_size);
 	if (!buffer_copy)
 		return -ENOMEM;
-	memcpy(buffer_copy, buffer, buffer_size);
+	crypt_safe_memcpy(buffer_copy, buffer, buffer_size);
 
 	r = LOOPAES_parse_keyfile(cd, &vk, cd->u.loopaes.hdr.hash, &key_count,
 				  buffer_copy, buffer_size);
@@ -6178,7 +6190,7 @@ int crypt_volume_key_get_by_keyslot_context(struct crypt_device *cd,
 	} else if (isVERITY(cd->type)) {
 		/* volume_key == root hash */
 		if (cd->u.verity.root_hash) {
-			memcpy(volume_key, cd->u.verity.root_hash, cd->u.verity.root_hash_size);
+			crypt_safe_memcpy(volume_key, cd->u.verity.root_hash, cd->u.verity.root_hash_size);
 			*volume_key_size = cd->u.verity.root_hash_size;
 			r = 0;
 		} else
@@ -6204,7 +6216,7 @@ int crypt_volume_key_get_by_keyslot_context(struct crypt_device *cd,
 	}
 
 	if (r >= 0 && vk) {
-		memcpy(volume_key, vk->key, vk->keylength);
+		crypt_safe_memcpy(volume_key, vk->key, vk->keylength);
 		*volume_key_size = vk->keylength;
 	}
 

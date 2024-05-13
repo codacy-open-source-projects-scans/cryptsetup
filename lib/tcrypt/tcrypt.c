@@ -320,16 +320,16 @@ static void TCRYPT_copy_key(struct tcrypt_alg *alg, const char *mode,
 	int ks2;
 	if (!strncmp(mode, "xts", 3)) {
 		ks2 = alg->key_size / 2;
-		memcpy(out_key, &key[alg->key_offset], ks2);
-		memcpy(&out_key[ks2], &key[alg->iv_offset], ks2);
+		crypt_safe_memcpy(out_key, &key[alg->key_offset], ks2);
+		crypt_safe_memcpy(&out_key[ks2], &key[alg->iv_offset], ks2);
 	} else if (!strncmp(mode, "lrw", 3)) {
 		ks2 = alg->key_size - TCRYPT_LRW_IKEY_LEN;
-		memcpy(out_key, &key[alg->key_offset], ks2);
-		memcpy(&out_key[ks2], key, TCRYPT_LRW_IKEY_LEN);
+		crypt_safe_memcpy(out_key, &key[alg->key_offset], ks2);
+		crypt_safe_memcpy(&out_key[ks2], key, TCRYPT_LRW_IKEY_LEN);
 	} else if (!strncmp(mode, "cbc", 3)) {
-		memcpy(out_key, &key[alg->key_offset], alg->key_size);
+		crypt_safe_memcpy(out_key, &key[alg->key_offset], alg->key_size);
 		/* IV + whitening */
-		memcpy(&out_key[alg->key_size], &key[alg->iv_offset],
+		crypt_safe_memcpy(&out_key[alg->key_size], &key[alg->iv_offset],
 		       alg->key_extra_size);
 	}
 }
@@ -1070,7 +1070,7 @@ uint64_t TCRYPT_get_iv_offset(struct crypt_device *cd,
 			      struct tcrypt_phdr *hdr,
 			      struct crypt_params_tcrypt *params)
 {
-	uint64_t iv_offset;
+	uint64_t iv_offset, partition_offset;
 
 	if (params->mode && !strncmp(params->mode, "xts", 3))
 		iv_offset = TCRYPT_get_data_offset(cd, hdr, params);
@@ -1079,8 +1079,14 @@ uint64_t TCRYPT_get_iv_offset(struct crypt_device *cd,
 	else
 		iv_offset = hdr->d.mk_offset / SECTOR_SIZE;
 
-	if (params->flags & CRYPT_TCRYPT_SYSTEM_HEADER)
-		iv_offset += crypt_dev_partition_offset(device_path(crypt_data_device(cd)));
+	if (params->flags & CRYPT_TCRYPT_SYSTEM_HEADER) {
+		partition_offset = crypt_dev_partition_offset(device_path(crypt_data_device(cd)));
+		/* FIXME: we need to deal with overflow sooner */
+		if (iv_offset > (UINT64_MAX - partition_offset))
+			iv_offset = UINT64_MAX;
+		else
+			iv_offset += partition_offset;
+	}
 
 	return iv_offset;
 }

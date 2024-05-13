@@ -144,15 +144,10 @@ int crypt_bitlk_decrypt_key(const void *key, size_t key_length,
 			    const char *tag, size_t tag_length);
 
 /* Memzero helper (memset on stack can be optimized out) */
-static inline void crypt_backend_memzero(void *s, size_t n)
-{
-#ifdef HAVE_EXPLICIT_BZERO
-	explicit_bzero(s, n);
-#else
-	volatile uint8_t *p = (volatile uint8_t *)s;
-	while(n--) *p++ = 0;
-#endif
-}
+void crypt_backend_memzero(void *s, size_t n);
+
+/* Memcpy helper to avoid spilling sensitive data through additional registers */
+void *crypt_backend_memcpy(void *dst, const void *src, size_t n);
 
 /* Memcmp helper (memcmp in constant time) */
 int crypt_backend_memeq(const void *m1, const void *m2, size_t n);
