@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * libcryptsetup - cryptsetup library
  *
@@ -5,20 +6,6 @@
  * Copyright (C) 2004-2007 Clemens Fruhwirth <clemens@endorphin.org>
  * Copyright (C) 2009-2024 Red Hat, Inc. All rights reserved.
  * Copyright (C) 2009-2024 Milan Broz
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #include <string.h>
@@ -2232,7 +2219,7 @@ static int opal_topology_alignment(struct crypt_device *cd,
 {
 	bool opal_align;
 	int r;
-	uint32_t opal_block_bytes;
+	uint32_t opal_block_bytes, device_block_bytes;
 	uint64_t opal_alignment_granularity_blocks, opal_lowest_lba_blocks;
 
 	assert(cd);
@@ -2248,12 +2235,20 @@ static int opal_topology_alignment(struct crypt_device *cd,
 		return -EINVAL;
 	}
 
-	log_dbg(cd, "OPAL geometry: alignment: '%c', logical block size: %" PRIu32
+	device_block_bytes = device_block_size(cd, crypt_data_device(cd));
+
+	log_dbg(cd, "OPAL geometry: alignment: '%c', logical block size: %" PRIu32 "/%" PRIu32
 		    ", alignment granularity: %" PRIu64 ", lowest aligned LBA: %" PRIu64,
-	        opal_align ? 'y' : 'n', opal_block_bytes, opal_alignment_granularity_blocks, opal_lowest_lba_blocks);
+		    opal_align ? 'y' : 'n', opal_block_bytes, device_block_bytes,
+		    opal_alignment_granularity_blocks, opal_lowest_lba_blocks);
 
 	if (opal_block_bytes < SECTOR_SIZE || NOTPOW2(opal_block_bytes)) {
 		log_err(cd, _("Bogus OPAL logical block size."));
+		return -EINVAL;
+	}
+
+	if (device_block_bytes != opal_block_bytes) {
+		log_err(cd, _("Bogus OPAL logical block size differs from device block size."));
 		return -EINVAL;
 	}
 
