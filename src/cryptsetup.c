@@ -323,6 +323,9 @@ static int action_open_plain(void)
 		pmode = cipher_mode;
 	}
 
+	if ((r = tools_check_newname(activated_name)))
+		goto out;
+
 	if (ARG_SET(OPT_DEVICE_SIZE_ID))
 		params.size = ARG_UINT64(OPT_DEVICE_SIZE_ID) / SECTOR_SIZE;
 	else if (ARG_SET(OPT_SIZE_ID))
@@ -406,6 +409,9 @@ static int action_open_loopaes(void)
 		if (r < 0)
 			goto out;
 	}
+
+	if ((r = tools_check_newname(activated_name)))
+		goto out;
 
 	set_activation_flags(&activate_flags);
 
@@ -511,6 +517,8 @@ static int action_open_tcrypt(void)
 	int r;
 
 	activated_name = ARG_SET(OPT_TEST_PASSPHRASE_ID) ? NULL : action_argv[1];
+	if ((r = tools_check_newname(activated_name)))
+		goto out;
 
 	r = crypt_init_data_device(&cd, ARG_STR(OPT_HEADER_ID) ?: action_argv[0], action_argv[0]);
 	if (r < 0)
@@ -542,6 +550,8 @@ static int action_open_bitlk(void)
 	size_t passwordLen;
 
 	activated_name = ARG_SET(OPT_TEST_PASSPHRASE_ID) ? NULL : action_argv[1];
+	if ((r = tools_check_newname(activated_name)))
+		goto out;
 
 	if ((r = crypt_init(&cd, action_argv[0])))
 		goto out;
@@ -825,6 +835,8 @@ static int action_open_fvault2(void)
 	size_t passwordLen;
 
 	activated_name = ARG_SET(OPT_TEST_PASSPHRASE_ID) ? NULL : action_argv[1];
+	if ((r = tools_check_newname(activated_name)))
+		goto out;
 
 	if ((r = crypt_init(&cd, action_argv[0])))
 		goto out;
@@ -1493,7 +1505,7 @@ int luksFormat(struct crypt_device **r_cd, char **r_password, size_t *r_password
 	const char *header_device, *type;
 	char *msg = NULL, *key = NULL, *password = NULL;
 	char cipher [MAX_CIPHER_LEN], cipher_mode[MAX_CIPHER_LEN], integrity[MAX_CIPHER_LEN];
-	size_t passwordLen, signatures = 0;
+	size_t passwordLen = 0, signatures = 0;
 	struct crypt_device *cd = NULL;
 	struct crypt_params_luks1 params1 = {
 		.hash = ARG_STR(OPT_HASH_ID) ?: DEFAULT_LUKS1_HASH,
@@ -1949,6 +1961,9 @@ static int action_open_luks(void)
 			goto out;
 		}
 	}
+
+	if ((r = tools_check_newname(activated_name)))
+		goto out;
 
 	set_activation_flags(&activate_flags);
 
