@@ -4395,9 +4395,9 @@ int crypt_resume_by_passphrase(struct crypt_device *cd,
 			       size_t passphrase_size)
 {
 	int r;
-	struct crypt_keyslot_context kc;
+	struct crypt_keyslot_context kc = {};
 
-	crypt_keyslot_unlock_by_passphrase_init_internal(&kc, passphrase, passphrase_size);
+	crypt_keyslot_context_init_by_passphrase_internal(&kc, passphrase, passphrase_size);
 	r = crypt_resume_by_keyslot_context(cd, name, keyslot, &kc);
 	crypt_keyslot_context_destroy_internal(&kc);
 
@@ -4412,9 +4412,9 @@ int crypt_resume_by_keyfile_device_offset(struct crypt_device *cd,
 					  uint64_t keyfile_offset)
 {
 	int r;
-	struct crypt_keyslot_context kc;
+	struct crypt_keyslot_context kc = {};
 
-	crypt_keyslot_unlock_by_keyfile_init_internal(&kc, keyfile, keyfile_size, keyfile_offset);
+	crypt_keyslot_context_init_by_keyfile_internal(&kc, keyfile, keyfile_size, keyfile_offset);
 	r = crypt_resume_by_keyslot_context(cd, name, keyslot, &kc);
 	crypt_keyslot_context_destroy_internal(&kc);
 
@@ -4448,9 +4448,9 @@ int crypt_resume_by_volume_key(struct crypt_device *cd,
 	size_t volume_key_size)
 {
 	int r;
-	struct crypt_keyslot_context kc;
+	struct crypt_keyslot_context kc = {};
 
-	crypt_keyslot_unlock_by_key_init_internal(&kc, volume_key, volume_key_size);
+	crypt_keyslot_context_init_by_key_internal(&kc, volume_key, volume_key_size);
 	r = crypt_resume_by_keyslot_context(cd, name, CRYPT_ANY_SLOT /* unused */, &kc);
 	crypt_keyslot_context_destroy_internal(&kc);
 
@@ -4465,9 +4465,9 @@ int crypt_resume_by_token_pin(struct crypt_device *cd, const char *name,
 	void *usrptr)
 {
 	int r;
-	struct crypt_keyslot_context kc;
+	struct crypt_keyslot_context kc = {};
 
-	crypt_keyslot_unlock_by_token_init_internal(&kc, token, type, pin, pin_size, usrptr);
+	crypt_keyslot_context_init_by_token_internal(&kc, token, type, pin, pin_size, usrptr);
 	r = crypt_resume_by_keyslot_context(cd, name, CRYPT_ANY_SLOT, &kc);
 	crypt_keyslot_context_destroy_internal(&kc);
 
@@ -4485,13 +4485,13 @@ int crypt_keyslot_add_by_passphrase(struct crypt_device *cd,
 	size_t new_passphrase_size)
 {
 	int r;
-	struct crypt_keyslot_context kc, new_kc;
+	struct crypt_keyslot_context kc = {}, new_kc = {};
 
 	if (!passphrase || !new_passphrase)
 		return -EINVAL;
 
-	crypt_keyslot_unlock_by_passphrase_init_internal(&kc, passphrase, passphrase_size);
-	crypt_keyslot_unlock_by_passphrase_init_internal(&new_kc, new_passphrase, new_passphrase_size);
+	crypt_keyslot_context_init_by_passphrase_internal(&kc, passphrase, passphrase_size);
+	crypt_keyslot_context_init_by_passphrase_internal(&new_kc, new_passphrase, new_passphrase_size);
 
 	r = crypt_keyslot_add_by_keyslot_context(cd, CRYPT_ANY_SLOT, &kc, keyslot, &new_kc, 0);
 
@@ -4629,13 +4629,13 @@ int crypt_keyslot_add_by_keyfile_device_offset(struct crypt_device *cd,
 	uint64_t new_keyfile_offset)
 {
 	int r;
-	struct crypt_keyslot_context kc, new_kc;
+	struct crypt_keyslot_context kc = {}, new_kc = {};
 
 	if (!keyfile || !new_keyfile)
 		return -EINVAL;
 
-	crypt_keyslot_unlock_by_keyfile_init_internal(&kc, keyfile, keyfile_size, keyfile_offset);
-	crypt_keyslot_unlock_by_keyfile_init_internal(&new_kc, new_keyfile, new_keyfile_size, new_keyfile_offset);
+	crypt_keyslot_context_init_by_keyfile_internal(&kc, keyfile, keyfile_size, keyfile_offset);
+	crypt_keyslot_context_init_by_keyfile_internal(&new_kc, new_keyfile, new_keyfile_size, new_keyfile_offset);
 
 	r = crypt_keyslot_add_by_keyslot_context(cd, CRYPT_ANY_SLOT, &kc, keyslot, &new_kc, 0);
 
@@ -4679,13 +4679,13 @@ int crypt_keyslot_add_by_volume_key(struct crypt_device *cd,
 	size_t passphrase_size)
 {
 	int r;
-	struct crypt_keyslot_context kc, new_kc;
+	struct crypt_keyslot_context kc = {}, new_kc = {};
 
 	if (!passphrase)
 		return -EINVAL;
 
-	crypt_keyslot_unlock_by_key_init_internal(&kc, volume_key, volume_key_size);
-	crypt_keyslot_unlock_by_passphrase_init_internal(&new_kc, passphrase, passphrase_size);
+	crypt_keyslot_context_init_by_key_internal(&kc, volume_key, volume_key_size);
+	crypt_keyslot_context_init_by_passphrase_internal(&new_kc, passphrase, passphrase_size);
 
 	r = crypt_keyslot_add_by_keyslot_context(cd, CRYPT_ANY_SLOT, &kc, keyslot, &new_kc, 0);
 
@@ -5837,9 +5837,9 @@ int crypt_activate_by_passphrase(struct crypt_device *cd,
 	uint32_t flags)
 {
 	int r;
-	struct crypt_keyslot_context kc;
+	struct crypt_keyslot_context kc = {};
 
-	crypt_keyslot_unlock_by_passphrase_init_internal(&kc, passphrase, passphrase_size);
+	crypt_keyslot_context_init_by_passphrase_internal(&kc, passphrase, passphrase_size);
 	r = crypt_activate_by_keyslot_context(cd, name, keyslot, &kc, CRYPT_ANY_SLOT, NULL, flags);
 	crypt_keyslot_context_destroy_internal(&kc);
 
@@ -5855,9 +5855,9 @@ int crypt_activate_by_keyfile_device_offset(struct crypt_device *cd,
 	uint32_t flags)
 {
 	int r;
-	struct crypt_keyslot_context kc;
+	struct crypt_keyslot_context kc = {};
 
-	crypt_keyslot_unlock_by_keyfile_init_internal(&kc, keyfile, keyfile_size, keyfile_offset);
+	crypt_keyslot_context_init_by_keyfile_internal(&kc, keyfile, keyfile_size, keyfile_offset);
 	r = crypt_activate_by_keyslot_context(cd, name, keyslot, &kc, CRYPT_ANY_SLOT, NULL, flags);
 	crypt_keyslot_context_destroy_internal(&kc);
 
@@ -5894,9 +5894,9 @@ int crypt_activate_by_volume_key(struct crypt_device *cd,
 	uint32_t flags)
 {
 	int r;
-	struct crypt_keyslot_context kc;
+	struct crypt_keyslot_context kc = {};
 
-	crypt_keyslot_unlock_by_key_init_internal(&kc, volume_key, volume_key_size);
+	crypt_keyslot_context_init_by_key_internal(&kc, volume_key, volume_key_size);
 	r = crypt_activate_by_keyslot_context(cd, name, CRYPT_ANY_SLOT /* unused */, &kc, CRYPT_ANY_SLOT, NULL, flags);
 	crypt_keyslot_context_destroy_internal(&kc);
 
@@ -5912,7 +5912,7 @@ int crypt_activate_by_signed_key(struct crypt_device *cd,
 	uint32_t flags)
 {
 	int r;
-	struct crypt_keyslot_context kc;
+	struct crypt_keyslot_context kc = {};
 
 	if (!cd || !isVERITY(cd->type))
 		return -EINVAL;
@@ -5923,10 +5923,10 @@ int crypt_activate_by_signed_key(struct crypt_device *cd,
 	}
 
 	if (signature)
-		crypt_keyslot_unlock_by_signed_key_init_internal(&kc, volume_key, volume_key_size,
+		crypt_keyslot_context_init_by_signed_key_internal(&kc, volume_key, volume_key_size,
 			signature, signature_size);
 	else
-		crypt_keyslot_unlock_by_key_init_internal(&kc, volume_key, volume_key_size);
+		crypt_keyslot_context_init_by_key_internal(&kc, volume_key, volume_key_size);
 	r = crypt_activate_by_keyslot_context(cd, name, -2 /* unused */, &kc, CRYPT_ANY_SLOT, NULL, flags);
 	crypt_keyslot_context_destroy_internal(&kc);
 
@@ -6111,12 +6111,12 @@ int crypt_volume_key_get(struct crypt_device *cd,
 	size_t passphrase_size)
 {
 	int r;
-	struct crypt_keyslot_context kc;
+	struct crypt_keyslot_context kc = {};
 
 	if (!passphrase)
 		return crypt_volume_key_get_by_keyslot_context(cd, keyslot, volume_key, volume_key_size, NULL);
 
-	crypt_keyslot_unlock_by_passphrase_init_internal(&kc, passphrase, passphrase_size);
+	crypt_keyslot_context_init_by_passphrase_internal(&kc, passphrase, passphrase_size);
 
 	r = crypt_volume_key_get_by_keyslot_context(cd, keyslot, volume_key, volume_key_size, &kc);
 
@@ -7127,9 +7127,9 @@ int crypt_activate_by_token_pin(struct crypt_device *cd, const char *name,
 	void *usrptr, uint32_t flags)
 {
 	int r;
-	struct crypt_keyslot_context kc;
+	struct crypt_keyslot_context kc = {};
 
-	crypt_keyslot_unlock_by_token_init_internal(&kc, token, type, pin, pin_size, usrptr);
+	crypt_keyslot_context_init_by_token_internal(&kc, token, type, pin, pin_size, usrptr);
 	r = crypt_activate_by_keyslot_context(cd, name, CRYPT_ANY_SLOT, &kc, CRYPT_ANY_SLOT, NULL, flags);
 	crypt_keyslot_context_destroy_internal(&kc);
 
@@ -7524,7 +7524,7 @@ int crypt_keyslot_add_by_key(struct crypt_device *cd,
 	uint32_t flags)
 {
 	int r;
-	struct crypt_keyslot_context kc, new_kc;
+	struct crypt_keyslot_context kc = {}, new_kc = {};
 
 	if (!passphrase || ((flags & CRYPT_VOLUME_KEY_NO_SEGMENT) &&
 			    (flags & CRYPT_VOLUME_KEY_SET)))
@@ -7536,9 +7536,9 @@ int crypt_keyslot_add_by_key(struct crypt_device *cd,
 	if ((flags & CRYPT_VOLUME_KEY_SET) && crypt_keyslot_status(cd, keyslot) > CRYPT_SLOT_INACTIVE &&
 	    isLUKS2(cd->type)) {
 		if (volume_key)
-			crypt_keyslot_unlock_by_key_init_internal(&kc, volume_key, volume_key_size);
+			crypt_keyslot_context_init_by_key_internal(&kc, volume_key, volume_key_size);
 		else
-			crypt_keyslot_unlock_by_passphrase_init_internal(&kc, passphrase, passphrase_size);
+			crypt_keyslot_context_init_by_passphrase_internal(&kc, passphrase, passphrase_size);
 
 		r = verify_and_update_segment_digest(cd, &cd->u.luks2.hdr, keyslot, &kc);
 
@@ -7547,8 +7547,8 @@ int crypt_keyslot_add_by_key(struct crypt_device *cd,
 		return r;
 	}
 
-	crypt_keyslot_unlock_by_key_init_internal(&kc, volume_key, volume_key_size);
-	crypt_keyslot_unlock_by_passphrase_init_internal(&new_kc, passphrase, passphrase_size);
+	crypt_keyslot_context_init_by_key_internal(&kc, volume_key, volume_key_size);
+	crypt_keyslot_context_init_by_passphrase_internal(&new_kc, passphrase, passphrase_size);
 
 	r = crypt_keyslot_add_by_keyslot_context(cd, CRYPT_ANY_SLOT, &kc, keyslot, &new_kc, flags);
 
@@ -7894,12 +7894,12 @@ int crypt_activate_by_keyring(struct crypt_device *cd,
 			      uint32_t flags)
 {
 	int r;
-	struct crypt_keyslot_context kc;
+	struct crypt_keyslot_context kc = {};
 
 	if (!cd || !key_description)
 		return -EINVAL;
 
-	crypt_keyslot_unlock_by_keyring_internal(&kc, key_description);
+	crypt_keyslot_context_init_by_keyring_internal(&kc, key_description);
 	r = crypt_activate_by_keyslot_context(cd, name, keyslot, &kc, CRYPT_ANY_SLOT, NULL, flags);
 	crypt_keyslot_context_destroy_internal(&kc);
 
