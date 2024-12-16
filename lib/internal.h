@@ -51,8 +51,10 @@ struct luks2_reencrypt;
 
 struct volume_key {
 	int id;
-	size_t keylength;
-	const char *key_description;
+	size_t keylength; /* length in bytes */
+	const char *key_description; /* keyring key name/description */
+	key_type_t keyring_key_type; /* kernel keyring key type */
+	bool uploaded; /* uploaded to keyring, can drop it */
 	struct volume_key *next;
 	char key[];
 };
@@ -60,7 +62,9 @@ struct volume_key {
 struct volume_key *crypt_alloc_volume_key(size_t keylength, const char *key);
 struct volume_key *crypt_generate_volume_key(struct crypt_device *cd, size_t keylength);
 void crypt_free_volume_key(struct volume_key *vk);
-int crypt_volume_key_set_description(struct volume_key *key, const char *key_description);
+int crypt_volume_key_set_description(struct volume_key *key,
+				     const char *key_description, key_type_t keyring_key_type);
+int crypt_volume_key_set_description_by_name(struct volume_key *vk, const char *key_name);
 void crypt_volume_key_set_id(struct volume_key *vk, int id);
 int crypt_volume_key_get_id(const struct volume_key *vk);
 void crypt_volume_key_add_next(struct volume_key **vks, struct volume_key *vk);
@@ -217,7 +221,7 @@ int crypt_wipe_device(struct crypt_device *cd,
 
 /* Internal integrity helpers */
 const char *crypt_get_integrity(struct crypt_device *cd);
-int crypt_get_integrity_key_size(struct crypt_device *cd);
+int crypt_get_integrity_key_size(struct crypt_device *cd, bool dm_compat);
 int crypt_get_integrity_tag_size(struct crypt_device *cd);
 
 int crypt_key_in_keyring(struct crypt_device *cd);
@@ -233,7 +237,7 @@ int crypt_keyring_get_key_by_name(struct crypt_device *cd,
 		size_t *key_size);
 int crypt_use_keyring_for_vk(struct crypt_device *cd);
 void crypt_drop_keyring_key_by_description(struct crypt_device *cd, const char *key_description, key_type_t ktype);
-void crypt_drop_keyring_key(struct crypt_device *cd, struct volume_key *vks);
+void crypt_drop_uploaded_keyring_key(struct crypt_device *cd, struct volume_key *vks);
 
 static inline uint64_t compact_version(uint16_t major, uint16_t minor, uint16_t patch, uint16_t release)
 {

@@ -20,12 +20,14 @@ struct volume_key *crypt_alloc_volume_key(size_t keylength, const char *key)
 	if (keylength > (SIZE_MAX - sizeof(*vk)))
 		return NULL;
 
-	vk = malloc(sizeof(*vk) + keylength);
+	vk = crypt_safe_alloc(sizeof(*vk) + keylength);
 	if (!vk)
 		return NULL;
 
 	vk->key_description = NULL;
+	vk->keyring_key_type = INVALID_KEY;
 	vk->keylength = keylength;
+	vk->uploaded = false;
 	vk->id = KEY_NOT_VERIFIED;
 	vk->next = NULL;
 
@@ -40,17 +42,30 @@ struct volume_key *crypt_alloc_volume_key(size_t keylength, const char *key)
 	return vk;
 }
 
-int crypt_volume_key_set_description(struct volume_key *vk, const char *key_description)
+int crypt_volume_key_set_description(struct volume_key *vk,
+				     const char *key_description, key_type_t keyring_key_type)
 {
 	if (!vk)
 		return -EINVAL;
 
 	free(CONST_CAST(void*)vk->key_description);
 	vk->key_description = NULL;
+	vk->keyring_key_type = keyring_key_type;
 	if (key_description && !(vk->key_description = strdup(key_description)))
 		return -ENOMEM;
 
 	return 0;
+}
+
+int crypt_volume_key_set_description_by_name(struct volume_key *vk, const char *key_name)
+{
+	const char *key_description = NULL;
+	key_type_t keyring_key_type = keyring_type_and_name(key_name, &key_description);
+
+	if (keyring_key_type == INVALID_KEY)
+		return -EINVAL;
+
+	return crypt_volume_key_set_description(vk, key_description, keyring_key_type);
 }
 
 void crypt_volume_key_set_id(struct volume_key *vk, int id)
@@ -107,11 +122,9 @@ void crypt_free_volume_key(struct volume_key *vk)
 	struct volume_key *vk_next;
 
 	while (vk) {
-		crypt_safe_memzero(vk->key, vk->keylength);
-		vk->keylength = 0;
 		free(CONST_CAST(void*)vk->key_description);
 		vk_next = vk->next;
-		free(vk);
+		crypt_safe_free(vk);
 		vk = vk_next;
 	}
 }

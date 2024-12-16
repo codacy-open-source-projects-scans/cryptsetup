@@ -835,8 +835,7 @@ static int _activate(
 	r = dm_crypt_target_set(&dm_dev.segment, 0, dm_dev.size,
 		crypt_data_device(cd), vol_key, cipher,
 		crypt_get_iv_offset(cd), crypt_get_data_offset(cd),
-		crypt_get_integrity(cd), crypt_get_integrity_tag_size(cd),
-		crypt_get_sector_size(cd));
+		NULL, 0, 0, crypt_get_sector_size(cd));
 
 	if (!r)
 		r = dm_create_device(cd, name, CRYPT_FVAULT2, &dm_dev);
@@ -997,48 +996,19 @@ int FVAULT2_dump(
 	return 0;
 }
 
-int FVAULT2_activate_by_passphrase(
-	struct crypt_device *cd,
-	const char *name,
-	const char *passphrase,
-	size_t passphrase_len,
-	const struct fvault2_params *params,
-	uint32_t flags)
-{
-	int r;
-	struct volume_key *vol_key = NULL;
-
-	r = FVAULT2_get_volume_key(cd, passphrase, passphrase_len, params, &vol_key);
-	if (r < 0)
-		return r;
-
-	if (name)
-	    r = _activate(cd, name, vol_key, params, flags);
-
-	crypt_free_volume_key(vol_key);
-	return r;
-}
-
 int FVAULT2_activate_by_volume_key(
 	struct crypt_device *cd,
 	const char *name,
-	const char *key,
-	size_t key_size,
+	struct volume_key *vk,
 	const struct fvault2_params *params,
 	uint32_t flags)
 {
-	int r = 0;
-	struct volume_key *vol_key = NULL;
+	assert(vk && vk->keylength == FVAULT2_XTS_KEY_SIZE);
 
-	if (key_size != FVAULT2_XTS_KEY_SIZE)
-		return -EINVAL;
+	return _activate(cd, name, vk, params, flags);
+}
 
-	vol_key = crypt_alloc_volume_key(FVAULT2_XTS_KEY_SIZE, key);
-	if (vol_key == NULL)
-		return -ENOMEM;
-
-	r = _activate(cd, name, vol_key, params, flags);
-
-	crypt_free_volume_key(vol_key);
-	return r;
+size_t FVAULT2_volume_key_size(void)
+{
+	return FVAULT2_XTS_KEY_SIZE;
 }

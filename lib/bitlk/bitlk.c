@@ -742,7 +742,7 @@ int BITLK_dump(struct crypt_device *cd, struct device *device, struct bitlk_meta
 	log_std(cd, "Description:  \t%s\n", params->description);
 	log_std(cd, "Cipher name:  \t%s\n", params->cipher);
 	log_std(cd, "Cipher mode:  \t%s\n", params->cipher_mode);
-	log_std(cd, "Cipher key:   \t%u bits\n", params->key_size);
+	log_std(cd, "Cipher key:   \t%u [bits]\n", params->key_size);
 
 	log_std(cd, "\n");
 
@@ -1365,7 +1365,7 @@ static int _activate(struct crypt_device *cd,
 						crypt_get_cipher_spec(cd),
 						segments[i].iv_offset,
 						segments[i].iv_offset,
-						NULL, 0,
+						NULL, 0, 0,
 						params->sector_size);
 		if (r)
 			goto out;
@@ -1401,54 +1401,17 @@ out:
 	return r;
 }
 
-int BITLK_activate_by_passphrase(struct crypt_device *cd,
-				 const char *name,
-				 const char *password,
-				 size_t passwordLen,
-				 const struct bitlk_metadata *params,
-				 uint32_t flags)
-{
-	int r = 0;
-	struct volume_key *open_fvek_key = NULL;
-
-	r = _activate_check(cd, params);
-	if (r)
-		return r;
-
-	r = BITLK_get_volume_key(cd, password, passwordLen, params, &open_fvek_key);
-	if (r < 0)
-		goto out;
-
-	/* Password verify only */
-	if (!name)
-		goto out;
-
-	r = _activate(cd, name, open_fvek_key, params, flags);
-out:
-	crypt_free_volume_key(open_fvek_key);
-	return r;
-}
-
 int BITLK_activate_by_volume_key(struct crypt_device *cd,
 				 const char *name,
-				 const char *volume_key,
-				 size_t volume_key_size,
+				 struct volume_key *vk,
 				 const struct bitlk_metadata *params,
 				 uint32_t flags)
 {
-	int r = 0;
-	struct volume_key *open_fvek_key = NULL;
+	int r;
 
 	r = _activate_check(cd, params);
 	if (r)
 		return r;
 
-	open_fvek_key = crypt_alloc_volume_key(volume_key_size, volume_key);
-	if (!open_fvek_key)
-		return -ENOMEM;
-
-	r = _activate(cd, name, open_fvek_key, params, flags);
-
-	crypt_free_volume_key(open_fvek_key);
-	return r;
+	return _activate(cd, name, vk, params, flags);
 }

@@ -37,6 +37,8 @@
 
 #define LUKS2_DIGEST_MAX 8
 
+#define LUKS2_MIN_INTEGRITY_KEY_BYTES 16
+
 #define CRYPT_ANY_SEGMENT -1
 #define CRYPT_DEFAULT_SEGMENT -2
 #define CRYPT_ONE_SEGMENT -3
@@ -196,11 +198,11 @@ int LUKS2_keyslot_open(struct crypt_device *cd,
 	size_t password_len,
 	struct volume_key **vk);
 
-int LUKS2_keyslot_open_all_segments(struct crypt_device *cd,
+int LUKS2_keyslot_context_open_all_segments(struct crypt_device *cd,
 	int keyslot_old,
 	int keyslot_new,
-	const char *password,
-	size_t password_len,
+	struct crypt_keyslot_context *kc_old,
+	struct crypt_keyslot_context *kc_new,
 	struct volume_key **vks);
 
 int LUKS2_keyslot_store(struct crypt_device *cd,
@@ -227,6 +229,24 @@ int LUKS2_keyslot_swap(struct crypt_device *cd,
 	struct luks2_hdr *hdr,
 	int keyslot,
 	int keyslot2);
+
+/*
+ * Segments
+ */
+
+bool LUKS2_segment_set_size(struct luks2_hdr *hdr,
+	int segment,
+	const uint64_t *segment_size_bytes);
+
+bool LUKS2_segment_is_hw_opal(struct luks2_hdr *hdr, int segment);
+bool LUKS2_segment_is_hw_opal_crypt(struct luks2_hdr *hdr, int segment);
+bool LUKS2_segment_is_hw_opal_only(struct luks2_hdr *hdr, int segment);
+
+int LUKS2_get_opal_segment_number(struct luks2_hdr *hdr, int segment,
+				  uint32_t *ret_opal_segment_number);
+int LUKS2_get_opal_key_size(struct luks2_hdr *hdr, int segment);
+
+bool LUKS2_segments_dynamic_size(struct luks2_hdr *hdr);
 
 /*
  * Generic LUKS2 token
@@ -263,17 +283,6 @@ crypt_token_info LUKS2_token_status(struct crypt_device *cd,
 	int token,
 	const char **type);
 
-int LUKS2_token_open_and_activate(struct crypt_device *cd,
-	struct luks2_hdr *hdr,
-	int keyslot,
-	int token,
-	const char *name,
-	const char *type,
-	const char *pin,
-	size_t pin_size,
-	uint32_t flags,
-	void *usrptr);
-
 int LUKS2_token_unlock_key(struct crypt_device *cd,
 	struct luks2_hdr *hdr,
 	int keyslot,
@@ -307,8 +316,7 @@ void crypt_token_unload_external_all(struct crypt_device *cd);
 /*
  * Generic LUKS2 digest
  */
-int LUKS2_digest_any_matching(struct crypt_device *cd,
-		struct luks2_hdr *hdr,
+int LUKS2_digest_verify_by_any_matching(struct crypt_device *cd,
 		const struct volume_key *vk);
 
 int LUKS2_digest_verify_by_segment(struct crypt_device *cd,
@@ -371,6 +379,7 @@ int LUKS2_generate_hdr(
 	const struct volume_key *vk,
 	const char *cipher_spec,
 	const char *integrity,
+	uint32_t integrity_key_size, /* in bytes, only if separate (HMAC) */
 	const char *uuid,
 	unsigned int sector_size,
 	uint64_t data_offset,
@@ -398,6 +407,7 @@ int LUKS2_get_data_size(struct luks2_hdr *hdr, uint64_t *size, bool *dynamic);
 uint32_t LUKS2_get_sector_size(struct luks2_hdr *hdr);
 const char *LUKS2_get_cipher(struct luks2_hdr *hdr, int segment);
 const char *LUKS2_get_integrity(struct luks2_hdr *hdr, int segment);
+int LUKS2_get_integrity_key_size(struct luks2_hdr *hdr, int segment);
 int LUKS2_keyslot_params_default(struct crypt_device *cd, struct luks2_hdr *hdr,
 	 struct luks2_keyslot_params *params);
 int LUKS2_get_volume_key_size(struct luks2_hdr *hdr, int segment);
@@ -439,8 +449,6 @@ int LUKS2_unmet_requirements(struct crypt_device *cd, struct luks2_hdr *hdr, uin
 
 int LUKS2_key_description_by_segment(struct crypt_device *cd,
 		struct luks2_hdr *hdr, struct volume_key *vk, int segment);
-int LUKS2_volume_key_load_in_keyring_by_keyslot(struct crypt_device *cd,
-		struct luks2_hdr *hdr, struct volume_key *vk, int keyslot);
 int LUKS2_volume_key_load_in_keyring_by_digest(struct crypt_device *cd,
 		struct volume_key *vk, int digest);
 
@@ -454,13 +462,6 @@ int LUKS2_luks2_to_luks1(struct crypt_device *cd,
 /*
  * LUKS2 reencryption
  */
-int LUKS2_reencrypt_locked_recovery_by_passphrase(struct crypt_device *cd,
-	int keyslot_old,
-	int keyslot_new,
-	const char *passphrase,
-	size_t passphrase_size,
-	struct volume_key **vks);
-
 int LUKS2_reencrypt_locked_recovery_by_vks(struct crypt_device *cd,
 	struct volume_key *vks);
 
@@ -489,20 +490,10 @@ int LUKS2_reencrypt_check_device_size(struct crypt_device *cd,
 	bool device_exclusive_check,
 	bool dynamic);
 
-void LUKS2_reencrypt_lookup_key_ids(struct crypt_device *cd,
-        struct luks2_hdr *hdr,
-        struct volume_key *vk);
-
 int LUKS2_reencrypt_digest_verify(struct crypt_device *cd,
 	struct luks2_hdr *hdr,
 	struct volume_key *vks);
 
-int LUKS2_reencrypt_max_hotzone_size(struct crypt_device *cd,
-	struct luks2_hdr *hdr,
-	const struct reenc_protection *rp,
-	int reencrypt_keyslot,
-	uint64_t *r_length);
-
-void LUKS2_reencrypt_protection_erase(struct reenc_protection *rp);
+unsigned LUKS2_reencrypt_vks_count(struct luks2_hdr *hdr);
 
 #endif
