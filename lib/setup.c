@@ -267,7 +267,7 @@ int init_crypto(struct crypt_device *ctx)
 		return r;
 	}
 
-	r = crypt_backend_init(crypt_fips_mode());
+	r = crypt_backend_init();
 	if (r < 0)
 		log_err(ctx, _("Cannot initialize crypto backend."));
 
@@ -6788,6 +6788,16 @@ int crypt_get_verity_info(struct crypt_device *cd,
 	vp->hash_type = cd->u.verity.hdr.hash_type;
 	vp->flags = cd->u.verity.hdr.flags & (CRYPT_VERITY_NO_HEADER | CRYPT_VERITY_ROOT_HASH_SIGNATURE);
 	return 0;
+}
+
+int crypt_get_verity_repaired(struct crypt_device *cd, const char *name,
+			      uint64_t *repaired)
+
+{
+	if (!cd || !isVERITY(cd->type) || !name || !repaired)
+		return -EINVAL;
+
+	return dm_status_verity_repaired(cd, name, repaired);
 }
 
 int crypt_get_integrity_info(struct crypt_device *cd,
