@@ -3026,6 +3026,17 @@ int crypt_format_inline(struct crypt_device *cd,
 	} else if (isLUKS2(type)) {
 		lparams = params;
 		iparams = lparams->integrity_params;
+
+		if (lparams->data_device) {
+			if (!cd->metadata_device)
+				cd->metadata_device = cd->device;
+			else
+				device_free(cd, cd->device);
+			cd->device = NULL;
+			if (device_alloc(cd, &cd->device, lparams->data_device) < 0)
+				return -ENOMEM;
+		}
+
 		idevice = crypt_data_device(cd);
 		required_sector_size = lparams->sector_size;
 
@@ -5450,6 +5461,9 @@ int crypt_activate_by_keyslot_context(struct crypt_device *cd,
 		return _activate_loopaes(cd, name, passphrase, passphrase_size, flags);
 	}
 
+	if (flags & CRYPT_ACTIVATE_SERIALIZE_MEMORY_HARD_PBKDF)
+		cd->memory_hard_pbkdf_lock_enabled = true;
+
 	/* acquire the volume key(s) */
 	r = -EINVAL;
 	if (isLUKS1(cd->type)) {
@@ -5824,12 +5838,18 @@ int crypt_get_active_device(struct crypt_device *cd, const char *name,
 	if (r < 0)
 		return r;
 
-	/* For LUKS2 with integrity we need flags from underlying dm-integrity */
-	if (isLUKS2(cd->type) && crypt_get_integrity_tag_size(cd) &&
-		(iname = dm_get_active_iname(cd, name))) {
-		if (dm_query_device(cd, iname, 0, &dmdi) >= 0)
-			dmd.flags |= dmdi.flags;
-		free(iname);
+	/*
+	 * For integrity and LUKS2 (and detached header where context is NULL)
+	 * we need flags from underlying dm-integrity device.
+	 * This check must be skipped for non-LUKS2 integrity device.
+	 */
+	if ((isLUKS2(cd->type) || !cd->type) && crypt_get_integrity_tag_size(cd)) {
+	    if ((iname = dm_get_active_iname(cd, name))) {
+	        if (dm_query_device(cd, iname, 0, &dmdi) >= 0)
+	            dmd.flags |= dmdi.flags;
+	        free(iname);
+	    } else
+	        dmd.flags |= (CRYPT_ACTIVATE_NO_JOURNAL | CRYPT_ACTIVATE_INLINE_MODE);
 	}
 
 	if (cd && isTCRYPT(cd->type)) {
