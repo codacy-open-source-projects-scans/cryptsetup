@@ -12,7 +12,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#if HAVE_SYS_UTSNAME_H
 #include <sys/utsname.h>
+#endif
 #include <errno.h>
 
 #include "libcryptsetup.h"
@@ -258,7 +260,9 @@ int crypt_opal_supported(struct crypt_device *cd, struct device *opal_device)
 
 int init_crypto(struct crypt_device *ctx)
 {
+#if HAVE_SYS_UTSNAME_H
 	struct utsname uts;
+#endif
 	int r;
 
 	r = crypt_random_init(ctx);
@@ -275,9 +279,11 @@ int init_crypto(struct crypt_device *ctx)
 		log_dbg(ctx, "Crypto backend (%s%s) initialized in cryptsetup library version %s.",
 			crypt_backend_version(), crypt_argon2_version(), PACKAGE_VERSION);
 
+#if HAVE_SYS_UTSNAME_H
 		if (!uname(&uts))
 			log_dbg(ctx, "Detected kernel %s %s %s.",
 				uts.sysname, uts.release, uts.machine);
+#endif
 		_crypto_logged = 1;
 	}
 
@@ -3564,7 +3570,7 @@ static int _reload_device(struct crypt_device *cd, const char *name,
 	r = dm_reload_device(cd, name, &tdmd, dmflags, 1);
 out:
 	/* otherwise dm_targets_free would free src key */
-	if (src->u.crypt.vk == tgt->u.crypt.vk)
+	if (tgt->type == DM_CRYPT && src->u.crypt.vk == tgt->u.crypt.vk)
 		tgt->u.crypt.vk = NULL;
 
 	dm_targets_free(cd, &tdmd);
@@ -3831,7 +3837,7 @@ int crypt_resize(struct crypt_device *cd, const char *name, uint64_t new_size)
 		r = INTEGRITY_data_sectors(cd, crypt_metadata_device(cd),
 					   crypt_get_data_offset(cd) * SECTOR_SIZE, &old_size);
 		if (r < 0)
-			return r;
+			goto out;
 
 		dmd.size = dmdq.size;
 		dmd.flags = dmdq.flags | CRYPT_ACTIVATE_REFRESH | CRYPT_ACTIVATE_PRIVATE;
@@ -3855,7 +3861,7 @@ int crypt_resize(struct crypt_device *cd, const char *name, uint64_t new_size)
 		r = INTEGRITY_data_sectors(cd, crypt_metadata_device(cd),
 				crypt_get_data_offset(cd) * SECTOR_SIZE, &new_size);
 		if (r < 0)
-			return r;
+			goto out;
 		log_dbg(cd, "Maximum integrity device size from kernel %" PRIu64, new_size);
 
 		if (old_size == new_size && new_size == dmdq.size &&
