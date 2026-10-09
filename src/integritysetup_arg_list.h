@@ -2,13 +2,15 @@
 /*
  * Integritysetup command line arguments list
  *
- * Copyright (C) 2020-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2020-2025 Ondrej Kozina
+ * Copyright (C) 2020-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2020-2026 Ondrej Kozina
  */
 
 /* long name, short name, popt type, help description, units, internal argument type, default value */
 
 ARG(OPT_ALLOW_DISCARDS, '\0', POPT_ARG_NONE, N_("Allow discards (aka TRIM) requests for device"), NULL, CRYPT_ARG_BOOL, {}, OPT_ALLOW_DISCARDS_ACTIONS)
+
+ARG(OPT_ALLOW_DISCARDS_KEYED, '\0', POPT_ARG_NONE, N_("Allow secure keyed discards (aka TRIM) requests for device"), NULL, CRYPT_ARG_BOOL, {}, OPT_ALLOW_DISCARDS_ACTIONS)
 
 ARG(OPT_BATCH_MODE, 'q', POPT_ARG_NONE, N_("Do not ask for confirmation"), NULL, CRYPT_ARG_BOOL, {}, {})
 

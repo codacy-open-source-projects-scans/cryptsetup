@@ -4,8 +4,8 @@
  *
  * Copyright (C) 2004 Jana Saout <jana@saout.de>
  * Copyright (C) 2004-2007 Clemens Fruhwirth <clemens@endorphin.org>
- * Copyright (C) 2009-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2009-2025 Milan Broz
+ * Copyright (C) 2009-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2009-2026 Milan Broz
  */
 
 #include <stdio.h>
@@ -16,6 +16,9 @@
 #include <sys/utsname.h>
 
 #include "internal.h"
+#include "utils_storage_wrappers.h"
+
+#define MAX_CAPI_LEN_STR "143" /* for sscanf of crypto API string + 16  + \0 */
 
 size_t crypt_getpagesize(void)
 {
@@ -380,4 +383,157 @@ int crypt_strcmp(const char *a, const char *b)
 	else if (!a || !b)
 		return 1;
 	return strcmp(a, b);
+}
+
+int crypt_check_cipher(struct crypt_device *cd,
+		       size_t keylength,
+		       const char *cipher,
+		       const char *cipher_mode)
+{
+	int r;
+	char cipher_spec[2*MAX_CAPI_ONE_LEN], buf[SECTOR_SIZE], *empty_key;
+	struct crypt_storage *s = NULL;
+	struct volume_key *empty_vk = NULL;
+	struct crypt_storage_wrapper *csw = NULL;
+
+	log_dbg(cd, "Checking if cipher %s-%s is usable (storage wrapper).", cipher, cipher_mode);
+
+	empty_key = malloc(keylength);
+	if (!empty_key)
+		return -ENOMEM;
+
+	/* No need to get KEY quality random but it must avoid known weak keys. */
+	r = crypt_random_get(cd, empty_key, keylength, CRYPT_RND_NORMAL);
+	if (r < 0)
+		goto out;
+
+	r = crypt_storage_init(&s, SECTOR_SIZE, cipher, cipher_mode, empty_key, keylength, false);
+	if (!r) {
+		memset(buf, 0, sizeof(buf));
+		r = crypt_storage_decrypt(s, 0, sizeof(buf), buf);
+	}
+
+	/* dm-crypt backend requires root access */
+	if (!r || (getuid() || geteuid()))
+		goto out;
+
+	if (*cipher_mode != '\0')
+		r = snprintf(cipher_spec, sizeof(cipher_spec), "%s-%s", cipher, cipher_mode);
+	else
+		r = snprintf(cipher_spec, sizeof(cipher_spec), "%s", cipher);
+	if (r < 0 || (size_t)r >= sizeof(cipher_spec)) {
+		r = -EINVAL;
+		goto out;
+	}
+
+	empty_vk = crypt_alloc_volume_key(keylength, empty_key);
+	if (!empty_vk) {
+		r = -ENOMEM;
+		goto out;
+	}
+
+	r = crypt_storage_wrapper_init(cd, &csw, crypt_metadata_device(cd), 0, 0, SECTOR_SIZE,
+				       cipher_spec, empty_vk, CSW_DMCRYPT_ONLY | CSW_OPEN_READONLY);
+	if (r)
+		goto out;
+
+	memset(buf, 0, sizeof(buf));
+	r = crypt_storage_wrapper_read_decrypt(csw, 0, &buf, sizeof(buf));
+	crypt_safe_memzero(buf, sizeof(buf));
+	if (r < 0 || (size_t)r != sizeof(buf))
+		r = -EIO;
+	else
+		r = 0;
+out:
+	crypt_storage_destroy(s);
+	free(empty_key);
+	crypt_storage_wrapper_destroy(csw);
+	crypt_free_volume_key(empty_vk);
+	return r;
+}
+
+int crypt_capi_to_cipher(char **org_c, char **org_i, const char *c_dm, const char *i_dm)
+{
+	char cipher[MAX_CAPI_ONE_LEN], mode[MAX_CAPI_ONE_LEN], iv[MAX_CAPI_ONE_LEN],
+	     auth[MAX_CAPI_ONE_LEN], tmp[MAX_CAPI_LEN], dmcrypt_tmp[MAX_CAPI_LEN*2],
+	     capi[MAX_CAPI_LEN+1];
+	size_t len;
+	int i;
+
+	if (!c_dm)
+		return -EINVAL;
+
+	/* legacy mode */
+	if (strncmp(c_dm, "capi:", 5)) {
+		if (!(*org_c = strdup(c_dm)))
+			return -ENOMEM;
+		if (i_dm) {
+			if (!(*org_i = strdup(i_dm))) {
+				free(*org_c);
+				*org_c = NULL;
+				return -ENOMEM;
+			}
+		} else
+			*org_i = NULL;
+		return 0;
+	}
+
+	/* modes with capi: prefix */
+	i = sscanf(c_dm, "capi:%" MAX_CAPI_LEN_STR "[^-]-%" MAX_CAPI_ONE_LEN_STR "s", tmp, iv);
+	if (i != 2)
+		return -EINVAL;
+
+	/* non-cryptsetup compatible mode (generic driver with dash?) */
+	if (strrchr(iv, ')')) {
+		if (i_dm)
+			return -EINVAL;
+		if (!(*org_c = strdup(c_dm)))
+			return -ENOMEM;
+		return 0;
+	}
+
+	len = strlen(tmp);
+	if (len < 2)
+		return -EINVAL;
+
+	if (tmp[len-1] == ')')
+		tmp[len-1] = '\0';
+
+	if (sscanf(tmp, "rfc4309(%" MAX_CAPI_LEN_STR "s", capi) == 1) {
+		if (!(*org_i = strdup("aead")))
+			return -ENOMEM;
+	} else if (sscanf(tmp, "rfc7539(%" MAX_CAPI_LEN_STR "[^,],%" MAX_CAPI_ONE_LEN_STR "s", capi, auth) == 2) {
+		if (!(*org_i = strdup(auth)))
+			return -ENOMEM;
+	} else if (sscanf(tmp, "authenc(%" MAX_CAPI_ONE_LEN_STR "[^,],%" MAX_CAPI_LEN_STR "s", auth, capi) == 2) {
+		if (!(*org_i = strdup(auth)))
+			return -ENOMEM;
+	} else {
+		if (i_dm) {
+			if (!(*org_i = strdup(i_dm)))
+				return -ENOMEM;
+		} else
+			*org_i = NULL;
+		memset(capi, 0, sizeof(capi));
+		strncpy(capi, tmp, sizeof(capi)-1);
+	}
+
+	i = sscanf(capi, "%" MAX_CAPI_ONE_LEN_STR "[^(](%" MAX_CAPI_ONE_LEN_STR "[^)])", mode, cipher);
+	if (i == 2)
+		i = snprintf(dmcrypt_tmp, sizeof(dmcrypt_tmp), "%s-%s-%s", cipher, mode, iv);
+	else
+		i = snprintf(dmcrypt_tmp, sizeof(dmcrypt_tmp), "%s-%s", capi, iv);
+	if (i < 0 || (size_t)i >= sizeof(dmcrypt_tmp)) {
+		free(*org_i);
+		*org_i = NULL;
+		return -EINVAL;
+	}
+
+	if (!(*org_c = strdup(dmcrypt_tmp))) {
+		free(*org_i);
+		*org_i = NULL;
+		return -ENOMEM;
+	}
+
+	return 0;
 }

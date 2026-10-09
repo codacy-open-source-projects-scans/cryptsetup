@@ -2,8 +2,8 @@
 /*
  * crypto backend implementation
  *
- * Copyright (C) 2010-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2010-2025 Milan Broz
+ * Copyright (C) 2010-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2010-2026 Milan Broz
  */
 
 #ifndef _CRYPTO_BACKEND_H
@@ -108,15 +108,12 @@ int crypt_cipher_decrypt(struct crypt_cipher *ctx,
 			 const char *in, char *out, size_t length,
 			 const char *iv, size_t iv_length);
 bool crypt_cipher_kernel_only(struct crypt_cipher *ctx);
+bool crypt_cipher_aead_known(const char *name, const char *mode, const char *integrity, size_t key_bytes);
 
 /* Benchmark of kernel cipher performance */
 int crypt_cipher_perf_kernel(const char *name, const char *mode, char *buffer, size_t buffer_size,
 			     const char *key, size_t key_size, const char *iv, size_t iv_size,
 			     double *encryption_mbs, double *decryption_mbs);
-
-/* Check availability of a cipher (in kernel only) */
-int crypt_cipher_check_kernel(const char *name, const char *mode,
-			      const char *integrity, size_t key_length);
 
 /* Storage encryption wrappers */
 int crypt_storage_init(struct crypt_storage **ctx, size_t sector_size,

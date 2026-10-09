@@ -3,8 +3,8 @@
  * LUKS - Linux Unified Key Setup
  *
  * Copyright (C) 2004-2006 Clemens Fruhwirth <clemens@endorphin.org>
- * Copyright (C) 2009-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2013-2025 Milan Broz
+ * Copyright (C) 2009-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2013-2026 Milan Broz
  */
 
 #include <sys/types.h>
@@ -27,7 +27,7 @@ int LUKS_keyslot_area(const struct luks_phdr *hdr,
 	uint64_t *offset,
 	uint64_t *length)
 {
-	if(keyslot >= LUKS_NUMKEYS || keyslot < 0)
+	if (keyslot >= LUKS_NUMKEYS || keyslot < 0)
 		return -EINVAL;
 
 	*offset = (uint64_t)hdr->keyblock[keyslot].keyMaterialOffset * SECTOR_SIZE;
@@ -126,6 +126,11 @@ static int LUKS_check_keyslots(struct crypt_device *ctx, const struct luks_phdr 
 {
 	int i, prev, next, sorted_areas[LUKS_NUMKEYS] = { 0, 1, 2, 3, 4, 5, 6, 7 };
 	uint32_t secs_per_stripes = AF_split_sectors(phdr->keyBytes, LUKS_STRIPES);
+
+	if (!secs_per_stripes) {
+		log_dbg(ctx, "Invalid volume key size.");
+		return -1;
+	}
 
 	LUKS_sort_keyslots(phdr, sorted_areas);
 
@@ -274,7 +279,7 @@ out:
 }
 
 int LUKS_hdr_restore(
-	const char *backup_file,
+	struct device *backup_device,
 	struct luks_phdr *hdr,
 	struct crypt_device *ctx)
 {
@@ -284,7 +289,7 @@ int LUKS_hdr_restore(
 	char *buffer = NULL, msg[200];
 	struct luks_phdr hdr_file;
 
-	r = LUKS_read_phdr_backup(backup_file, &hdr_file, 0, ctx);
+	r = LUKS_read_phdr_backup(backup_device, &hdr_file, 0, ctx);
 	if (r == -ENOENT)
 		return r;
 
@@ -303,17 +308,17 @@ int LUKS_hdr_restore(
 		goto out;
 	}
 
-	fd = open(backup_file, O_RDONLY);
+	fd = device_open(ctx, backup_device, O_RDONLY);
 	if (fd == -1) {
-		log_err(ctx, _("Cannot open header backup file %s."), backup_file);
+		log_err(ctx, _("Cannot open header backup file %s."), device_path(backup_device));
 		r = -EINVAL;
 		goto out;
 	}
 
-	ret = read_buffer(fd, buffer, buffer_size);
-	close(fd);
+	ret = read_lseek_blockwise(fd, device_block_size(ctx, backup_device),
+			   device_alignment(backup_device), buffer, buffer_size, 0);
 	if (ret < buffer_size) {
-		log_err(ctx, _("Cannot read header backup file %s."), backup_file);
+		log_err(ctx, _("Cannot read header backup file %s."), device_path(backup_device));
 		r = -EIO;
 		goto out;
 	}
@@ -420,7 +425,7 @@ static int _keyslot_repair(struct luks_phdr *phdr, struct crypt_device *ctx)
 		need_write = 1;
 	}
 
-	r = LUKS_check_cipher(ctx, phdr->keyBytes, phdr->cipherName, phdr->cipherMode);
+	r = crypt_check_cipher(ctx, phdr->keyBytes, phdr->cipherName, phdr->cipherMode);
 	if (r < 0)
 		return -EINVAL;
 
@@ -497,7 +502,7 @@ out:
 	return r;
 }
 
-static int _check_and_convert_hdr(const char *device,
+static int _check_and_convert_hdr(const struct device *device,
 				  struct luks_phdr *hdr,
 				  int require_luks_device,
 				  int repair,
@@ -511,7 +516,7 @@ static int _check_and_convert_hdr(const char *device,
 	if (memcmp(hdr->magic, luksMagic, LUKS_MAGIC_L)) { /* Check magic */
 		log_dbg(ctx, "LUKS header not detected.");
 		if (require_luks_device)
-			log_err(ctx, _("Device %s is not a valid LUKS device."), device);
+			log_err(ctx, _("Device %s is not a valid LUKS device."), device_path(device));
 		return -EINVAL;
 	} else if (hdr->version != 1) {
 		log_err(ctx, _("Unsupported LUKS version %d."), hdr->version);
@@ -564,31 +569,28 @@ static int _check_and_convert_hdr(const char *device,
 	return r;
 }
 
-int LUKS_read_phdr_backup(const char *backup_file,
+int LUKS_read_phdr_backup(struct device *backup_device,
 			  struct luks_phdr *hdr,
 			  int require_luks_device,
 			  struct crypt_device *ctx)
 {
 	ssize_t hdr_size = sizeof(struct luks_phdr);
-	int devfd = 0, r = 0;
+	int devfd;
 
 	log_dbg(ctx, "Reading LUKS header of size %d from backup file %s",
-		(int)hdr_size, backup_file);
+		(int)hdr_size, device_path(backup_device));
 
-	devfd = open(backup_file, O_RDONLY);
+	devfd = device_open(ctx, backup_device, O_RDONLY);
 	if (devfd == -1) {
-		log_err(ctx, _("Cannot open header backup file %s."), backup_file);
+		log_err(ctx, _("Cannot open header backup file %s."), device_path(backup_device));
 		return -ENOENT;
 	}
 
-	if (read_buffer(devfd, hdr, hdr_size) < hdr_size)
-		r = -EIO;
-	else
-		r = _check_and_convert_hdr(backup_file, hdr,
-					   require_luks_device, 0, ctx);
+	if (read_lseek_blockwise(devfd, device_block_size(ctx, backup_device),
+			   device_alignment(backup_device), hdr, hdr_size, 0) < hdr_size)
+		return -EIO;
 
-	close(devfd);
-	return r;
+	return _check_and_convert_hdr(backup_device, hdr, require_luks_device, 0, ctx);
 }
 
 int LUKS_read_phdr(struct luks_phdr *hdr,
@@ -622,8 +624,7 @@ int LUKS_read_phdr(struct luks_phdr *hdr,
 			   hdr, hdr_size, 0) < hdr_size)
 		r = -EIO;
 	else
-		r = _check_and_convert_hdr(device_path(device), hdr, require_luks_device,
-					   repair, ctx);
+		r = _check_and_convert_hdr(device, hdr, require_luks_device, repair, ctx);
 
 	if (!r)
 		r = LUKS_check_device_size(ctx, hdr, 0);
@@ -698,27 +699,6 @@ int LUKS_write_phdr(struct luks_phdr *hdr,
 				device_path(device));
 	}
 
-	return r;
-}
-
-/* Check that kernel supports requested cipher by decryption of one sector */
-int LUKS_check_cipher(struct crypt_device *ctx, size_t keylength, const char *cipher, const char *cipher_mode)
-{
-	int r;
-	struct volume_key *empty_key;
-	char buf[SECTOR_SIZE];
-
-	log_dbg(ctx, "Checking if cipher %s-%s is usable.", cipher, cipher_mode);
-
-	/* No need to get KEY quality random but it must avoid known weak keys. */
-	empty_key = crypt_generate_volume_key(ctx, keylength, KEY_QUALITY_NORMAL);
-	if (!empty_key)
-		return -ENOMEM;
-
-	r = LUKS_decrypt_from_storage(buf, sizeof(buf), cipher, cipher_mode, empty_key, 0, ctx);
-
-	crypt_free_volume_key(empty_key);
-	crypt_safe_memzero(buf, sizeof(buf));
 	return r;
 }
 
@@ -989,6 +969,9 @@ int LUKS_verify_volume_key(const struct luks_phdr *hdr,
 		return -EINVAL;
 
 	if (crypt_backend_memeq(checkHashBuf, hdr->mkDigest, LUKS_DIGESTSIZE))
+		return -EPERM;
+
+	if (hdr->keyBytes != crypt_volume_key_length(vk))
 		return -EPERM;
 
 	return 0;

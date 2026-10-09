@@ -4,8 +4,8 @@
  *
  * Copyright (C) 2004 Jana Saout <jana@saout.de>
  * Copyright (C) 2004-2007 Clemens Fruhwirth <clemens@endorphin.org>
- * Copyright (C) 2009-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2009-2025 Milan Broz
+ * Copyright (C) 2009-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2009-2026 Milan Broz
  */
 
 #include <uuid/uuid.h>
@@ -358,7 +358,8 @@ out:
 
 static int tcrypt_load(struct crypt_device *cd, struct crypt_params_tcrypt *params)
 {
-	int r, tries, eperm = 0;
+	uint32_t tries;
+	int r, eperm = 0;
 
 	tries = set_tries_tty(false);
 	do {
@@ -475,8 +476,8 @@ static int action_open_bitlk(void)
 {
 	struct crypt_device *cd = NULL;
 	const char *activated_name;
-	uint32_t activate_flags = 0;
-	int r, tries, keysize;
+	uint32_t tries, activate_flags = 0;
+	int r, keysize;
 	char *password = NULL;
 	char *key = NULL;
 	size_t passwordLen;
@@ -769,8 +770,8 @@ static int action_open_fvault2(void)
 {
 	struct crypt_device *cd = NULL;
 	const char *activated_name;
-	uint32_t activate_flags = 0;
-	int r, tries, keysize;
+	uint32_t tries, activate_flags = 0;
+	int r, keysize;
 	char *password = NULL;
 	char *key = NULL;
 	size_t passwordLen;
@@ -996,10 +997,12 @@ static int action_status(void)
 			log_std("  keysize: %d [bits]\n", crypt_get_volume_key_size(cd) * 8);
 			log_std("  key location: %s\n", (cad.flags & CRYPT_ACTIVATE_KEYRING_KEY) ? "keyring" : "dm-crypt");
 		} else if (hw_enc == CRYPT_OPAL_HW_ONLY) {
-			log_std("  encryption: HW OPAL only\n");
+			log_std("  encryption: HW OPAL%s only\n",
+				crypt_get_hw_opal_sum_enabled(cd) > 0 ? " (Single User Mode)" : "");
 			log_std("  OPAL keysize: %d [bits]\n", crypt_get_hw_encryption_key_size(cd) * 8);
 		} else if (hw_enc == CRYPT_SW_AND_OPAL_HW) {
-			log_std("  encryption: dm-crypt over HW OPAL\n");
+			log_std("  encryption: dm-crypt over HW OPAL%s\n",
+				crypt_get_hw_opal_sum_enabled(cd) > 0 ? " (Single User Mode)" : "");
 			log_std("  OPAL keysize: %d [bits]\n", crypt_get_hw_encryption_key_size(cd) * 8);
 			log_std("  cipher:  %s-%s\n", crypt_get_cipher(cd), crypt_get_cipher_mode(cd));
 			log_std("  keysize: %d [bits]\n", (crypt_get_volume_key_size(cd) - crypt_get_hw_encryption_key_size(cd)) * 8);
@@ -1165,6 +1168,7 @@ static int action_benchmark(void)
 	double enc_mbr = 0, dec_mbr = 0;
 	int key_size = (ARG_UINT32(OPT_KEY_SIZE_ID) ?: DEFAULT_PLAIN_KEYBITS) / 8;
 	int skipped = 0, width, mode_len;
+	bool head_printed = false;
 	char *c;
 	int i, r;
 
@@ -1214,13 +1218,17 @@ static int action_benchmark(void)
 			r = benchmark_cipher_loop(bciphers[i].cipher, bciphers[i].mode,
 						  bciphers[i].key_size, &enc_mbr, &dec_mbr);
 			check_signal(&r);
-			if (r == -ENOTSUP || r == -EINTR)
+			if (r == -EINTR)
 				break;
-			if (r == -ENOENT)
+			if (r == -ENOENT || r == -ENOTSUP) {
 				skipped++;
-			if (i == 0)
+				continue;
+			}
+			if (!head_printed) {
 				/* TRANSLATORS: The string is header of a table and must be exactly (right side) aligned. */
 				log_std(_("#     Algorithm |       Key |      Encryption |      Decryption\n"));
+				head_printed = true;
+			}
 
 			if (snprintf(cipher, MAX_CIPHER_LEN, "%s-%s",
 				     bciphers[i].cipher, bciphers[i].mode) < 0)
@@ -1234,15 +1242,9 @@ static int action_benchmark(void)
 					bciphers[i].key_size*8, _("N/A"), _("N/A"));
 		}
 		if (skipped && skipped == i)
-			r = -ENOTSUP;
+			log_std(_("# Cipher speed test is not available.\n"));
 	}
 
-	if (r == -ENOTSUP) {
-		log_err(_("Required kernel crypto interface not available."));
-#if ENABLE_AF_ALG
-		log_err( _("Ensure you have algif_skcipher kernel module loaded."));
-#endif
-	}
 	return r;
 }
 
@@ -1770,8 +1772,8 @@ static int action_open_luks(void)
 	struct crypt_active_device cad;
 	struct crypt_device *cd = NULL;
 	const char *data_device, *header_device, *activated_name;
-	uint32_t activate_flags = 0;
-	int r, tries, keysize = 0;
+	uint32_t tries, activate_flags = 0;
+	int r, keysize = 0;
 	struct stat st;
 	struct crypt_keyslot_context *kc1 = NULL, *kc2 = NULL;
 
@@ -2697,7 +2699,8 @@ static int action_luksResume(void)
 {
 	struct crypt_device *cd = NULL;
 	char *vk_description_activation = NULL;
-	int r, tries;
+	uint32_t tries;
+	int r;
 	struct crypt_active_device cad;
 	const char *req_type = luksType(device_type);
 	struct crypt_keyslot_context *kc = NULL;
@@ -3536,6 +3539,8 @@ static void help(poptContext popt_context,
 		struct action_type *action;
 		const struct crypt_pbkdf_type *pbkdf_luks1, *pbkdf_luks2;
 
+		struct crypt_type_defaults luks_defaults = {};
+
 		tools_package_version(PACKAGE_NAME, true);
 		poptPrintHelp(popt_context, stdout, 0);
 
@@ -3579,13 +3584,15 @@ static void help(poptContext popt_context,
 			 pbkdf_luks2->type, pbkdf_luks2->time_ms, pbkdf_luks2->max_memory_kb,
 			 pbkdf_luks2->parallel_threads);
 
+		crypt_get_type_defaults(CRYPT_LUKS1, &luks_defaults);
+
 		log_std(_("\nDefault compiled-in device cipher parameters:\n"
 			 "\tloop-AES: %s, Key %d bits\n"
 			 "\tplain: %s, Key: %d bits, Password hashing: %s\n"
-			 "\tLUKS: %s, Key: %d bits, LUKS header hashing: %s, RNG: %s\n"),
+			 "\tLUKS: %s-%s, Key: %d bits, LUKS header hashing: %s, RNG: %s\n"),
 			 DEFAULT_LOOPAES_CIPHER, DEFAULT_LOOPAES_KEYBITS,
 			 DEFAULT_CIPHER(PLAIN), DEFAULT_PLAIN_KEYBITS, DEFAULT_PLAIN_HASH,
-			 DEFAULT_CIPHER(LUKS1), DEFAULT_LUKS1_KEYBITS, DEFAULT_LUKS1_HASH,
+			 luks_defaults.cipher, luks_defaults.cipher_mode, luks_defaults.key_size, luks_defaults.hash,
 			 DEFAULT_RNG);
 #if ENABLE_LUKS_ADJUST_XTS_KEYSIZE && DEFAULT_LUKS1_KEYBITS != 512
 		log_std(_("\tLUKS: Default keysize with XTS mode (two internal keys) will be doubled.\n"));
@@ -3783,6 +3790,11 @@ static void basic_options_cb(poptContext popt_context,
 			usage(popt_context, EXIT_FAILURE,
 			_("Option --priority can be only ignore/normal/prefer."),
 			poptGetInvocationName(popt_context));
+		break;
+	case OPT_TRIES_ID:
+		if (ARG_UINT32(OPT_TRIES_ID) == 0)
+			usage(popt_context, EXIT_FAILURE, _("Invalid maximal tries specification."),
+			      poptGetInvocationName(popt_context));
 		break;
 	}
 }

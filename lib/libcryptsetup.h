@@ -4,8 +4,8 @@
  *
  * Copyright (C) 2004 Jana Saout <jana@saout.de>
  * Copyright (C) 2004-2007 Clemens Fruhwirth <clemens@endorphin.org>
- * Copyright (C) 2009-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2009-2025 Milan Broz
+ * Copyright (C) 2009-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2009-2026 Milan Broz
  */
 
 /**
@@ -435,6 +435,34 @@ const char *crypt_get_type(struct crypt_device *cd);
 const char *crypt_get_default_type(void);
 
 /**
+ * Structure representing default cryptographic parameters for a device type.
+ *
+ * @see crypt_get_type_defaults
+ */
+struct crypt_type_defaults {
+	const char *cipher;       /**< cipher algorithm (e.g., "aes") */
+	const char *cipher_mode;  /**< cipher_mode cipher mode and IV (e.g. "xts-plain64") */
+	const char *hash;         /**< hash algorithm */
+	uint32_t key_size;        /**< key size in bits */
+
+	/* LUKS2 Authenticated Encryption (AEAD) specific */
+	const char *integrity;    /**< integrity algorithm or @e NULL */
+	uint32_t tag_size;        /**< authentication tag size in bytes or @e 0 */
+};
+
+/**
+ * Get default cryptographic values for a specific device type.
+ *
+ * @param type requested type (CRYPT_LUKS1 or CRYPT_LUKS2)
+ * @param defaults pointer to the structure to be filled
+ *
+ * @return @e 0 on success or negative errno value otherwise.
+ *
+ * @note Available for CRYPT_LUKS1 and CRYPT_LUKS2 only.
+ */
+int crypt_get_type_defaults(const char *type, struct crypt_type_defaults *defaults);
+
+/**
  * @defgroup crypt-hw-encryption-types HW encryption type
  * @addtogroup crypt-hw-encryption-types
  * @{
@@ -454,6 +482,14 @@ const char *crypt_get_default_type(void);
  *         or negative errno value otherwise.
  */
 int crypt_get_hw_encryption_type(struct crypt_device *cd);
+
+/**
+ * Get OPAL Single User Mode (SUM) configuration
+ *
+ * @return @e 1 if OPAL in SUM is used, @e 0 if OPAL without SUM is used
+ *         or negative errno value otherwise.
+ */
+int crypt_get_hw_opal_sum_enabled(struct crypt_device *cd);
 
 /**
  * Get HW encryption (like OPAL) key size (in bytes)
@@ -747,8 +783,10 @@ uint32_t crypt_get_compatibility(struct crypt_device *cd);
 #define CRYPT_COMPAT_LEGACY_INTEGRITY_HMAC (UINT32_C(1) << 1)
 /** dm-integrity allow recalculating of volumes with HMAC keys (old kernels) */
 #define CRYPT_COMPAT_LEGACY_INTEGRITY_RECALC (UINT32_C(1) << 2)
+/** dm-integrity use non-keyed discard filler (old kernels) */
+#define CRYPT_COMPAT_LEGACY_INTEGRITY_DISCARD (UINT32_C(1) << 3)
 /** disable SUM (Single User Mode) when formatting LUKS2 device w/ HW encryption (OPAL2) */
-#define CRYPT_COMPAT_DISABLE_HW_OPAL_SUM (UINT32_C(1) << 3)
+#define CRYPT_COMPAT_DISABLE_HW_OPAL_SUM (UINT32_C(1) << 4)
 
 /**
  * Convert to new type for already existing device.
@@ -1163,7 +1201,11 @@ int crypt_keyslot_add_by_volume_key(struct crypt_device *cd,
 /** create keyslot with new volume key and assign it to current dm-crypt segment */
 #define CRYPT_VOLUME_KEY_SET (UINT32_C(1) << 1)
 
-/** Assign key to first matching digest before creating new digest */
+/**
+ * Assign key to first matching digest not associated with current dm-crypt segment
+ * before creating new digest. The flag is effective only with
+ * CRYPT_VOLUME_KEY_NO_SEGMENT or CRYPT_VOLUME_KEY_SET flag set.
+ */
 #define CRYPT_VOLUME_KEY_DIGEST_REUSE (UINT32_C(1) << 2)
 
 /**
@@ -1952,6 +1994,25 @@ typedef enum {
  * @return value defined by crypt_status_info.
  */
 crypt_status_info crypt_status(struct crypt_device *cd, const char *name);
+
+/**
+ * Device HW encryption status
+ */
+typedef enum {
+	CRYPT_HW_INVALID, /**< cannot get the status info or possible missing support in kernel */
+	CRYPT_HW_OTHER,   /**< device support only non-OPAL subsystems */
+	CRYPT_HW_OPAL,    /**< device claims OPAL2 support */
+	CRYPT_HW_OPAL_SUM /**< device claims OPAL2 with SUM (Single User Mode) option */
+} crypt_status_hw_encryption_info;
+
+/**
+ * Get status info about supported HW encryption
+ *
+ * @param cd crypt device handle
+ *
+ * @return value defined by crypt_status_hw_encryption_info.
+ */
+crypt_status_hw_encryption_info crypt_status_hw_encryption(struct crypt_device *cd);
 
 /**
  * Dump text-formatted information about crypt or verity device to log output.

@@ -2,8 +2,8 @@
 /*
  * Linux kernel userspace API crypto backend implementation (skcipher)
  *
- * Copyright (C) 2012-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2012-2025 Milan Broz
+ * Copyright (C) 2012-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2012-2026 Milan Broz
  */
 
 #include <stdlib.h>
@@ -113,7 +113,6 @@ static inline struct cmsghdr *_CMSG_NXTHDR(struct msghdr* mhdr, struct cmsghdr* 
 #endif
 }
 
-/* The in/out should be aligned to page boundary */
 /* coverity[ -taint_source : arg-3 ] */
 static int _crypt_cipher_crypt(struct crypt_cipher_kernel *ctx,
 			       const char *in, size_t in_length,
@@ -131,10 +130,9 @@ static int _crypt_cipher_crypt(struct crypt_cipher_kernel *ctx,
 		.iov_len = in_length,
 	};
 	int iv_msg_size = iv ? CMSG_SPACE(sizeof(*alg_iv) + iv_length) : 0;
-	char buffer[CMSG_SPACE(sizeof(*type)) + iv_msg_size];
+	int buffer_size = CMSG_SPACE(sizeof(*type)) + iv_msg_size;
+	char *buffer = NULL;
 	struct msghdr msg = {
-		.msg_control = buffer,
-		.msg_controllen = sizeof(buffer),
 		.msg_iov = &iov,
 		.msg_iovlen = 1,
 	};
@@ -145,12 +143,20 @@ static int _crypt_cipher_crypt(struct crypt_cipher_kernel *ctx,
 	if ((!iv && iv_length) || (iv && !iv_length))
 		return -EINVAL;
 
-	memset(buffer, 0, sizeof(buffer));
+	buffer = malloc(buffer_size);
+	if (!buffer)
+		return -ENOMEM;
+	crypt_backend_memzero(buffer, buffer_size);
+
+	msg.msg_control = buffer;
+	msg.msg_controllen = buffer_size;
 
 	/* Set encrypt/decrypt operation */
 	header = CMSG_FIRSTHDR(&msg);
-	if (!header)
-		return -EINVAL;
+	if (!header) {
+		r = -EINVAL;
+		goto out;
+	}
 
 	header->cmsg_level = SOL_ALG;
 	header->cmsg_type = ALG_SET_OP;
@@ -161,8 +167,10 @@ static int _crypt_cipher_crypt(struct crypt_cipher_kernel *ctx,
 	/* Set IV */
 	if (iv) {
 		header = _CMSG_NXTHDR(&msg, header);
-		if (!header)
-			return -EINVAL;
+		if (!header) {
+			r = -EINVAL;
+			goto out;
+		}
 
 		header->cmsg_level = SOL_ALG;
 		header->cmsg_type = ALG_SET_IV;
@@ -180,8 +188,9 @@ static int _crypt_cipher_crypt(struct crypt_cipher_kernel *ctx,
 		if (len != (ssize_t)out_length)
 			r = -EIO;
 	}
-
-	crypt_backend_memzero(buffer, sizeof(buffer));
+out:
+	crypt_backend_memzero(buffer, buffer_size);
+	free(buffer);
 	return r;
 }
 
@@ -210,77 +219,6 @@ void crypt_cipher_destroy_kernel(struct crypt_cipher_kernel *ctx)
 
 	ctx->tfmfd = -1;
 	ctx->opfd = -1;
-}
-
-int crypt_cipher_check_kernel(const char *name, const char *mode,
-			      const char *integrity, size_t key_length)
-{
-	struct crypt_cipher_kernel c;
-	char mode_name[64], tmp_salg_name[180], *cipher_iv = NULL, *key;
-	const char *salg_type, *real_mode;
-	bool aead;
-	int r;
-	struct sockaddr_alg sa = {
-		.salg_family = AF_ALG,
-	};
-
-	aead = integrity && strcmp(integrity, "none");
-	real_mode = NULL;
-
-	/* Remove IV if present */
-	if (mode) {
-		strncpy(mode_name, mode, sizeof(mode_name));
-		mode_name[sizeof(mode_name) - 1] = 0;
-		cipher_iv = strchr(mode_name, '-');
-		if (cipher_iv) {
-			*cipher_iv = '\0';
-			real_mode = mode_name;
-		}
-	}
-
-	salg_type = aead ? "aead" : "skcipher";
-	r = snprintf((char *)sa.salg_type, sizeof(sa.salg_type), "%s", salg_type);
-	if (r < 0 || (size_t)r >= sizeof(sa.salg_type))
-		return -EINVAL;
-
-	memset(tmp_salg_name, 0, sizeof(tmp_salg_name));
-
-	/* FIXME: this is duplicating a part of devmapper backend */
-	if (aead) {
-		/* In AEAD, mode parameter can be just IV like "random" */
-		if (!strcmp(integrity, "poly1305"))
-			r = snprintf(tmp_salg_name, sizeof(tmp_salg_name), "rfc7539(%s,%s)", name, integrity);
-		else if (!real_mode)
-			r = snprintf(tmp_salg_name, sizeof(tmp_salg_name), "%s", name);
-		else if (!strcmp(real_mode, "ccm"))
-			r = snprintf(tmp_salg_name, sizeof(tmp_salg_name), "rfc4309(%s(%s))", real_mode, name);
-		else
-			r = snprintf(tmp_salg_name, sizeof(tmp_salg_name), "%s(%s)", real_mode, name);
-	} else {
-		if (!mode)
-			r = snprintf(tmp_salg_name, sizeof(tmp_salg_name), "%s", name);
-		else
-			r = snprintf(tmp_salg_name, sizeof(tmp_salg_name), "%s(%s)", real_mode ?: mode_name, name);
-	}
-
-	if (r < 0 || (size_t)r >= sizeof(tmp_salg_name))
-		return -EINVAL;
-
-	memcpy(sa.salg_name, tmp_salg_name, sizeof(sa.salg_name));
-
-	key = malloc(key_length);
-	if (!key)
-		return -ENOMEM;
-
-	/* We cannot use RNG yet, any key works here, tweak the first part if it is split key (XTS). */
-	memset(key, 0xab, key_length);
-	*key = 0xef;
-
-	r = _crypt_cipher_init(&c, key, key_length, 0, &sa);
-	crypt_cipher_destroy_kernel(&c);
-	free(key);
-
-	return r;
 }
 
 int crypt_bitlk_decrypt_key_kernel(const void *key, size_t key_length,
@@ -351,12 +289,6 @@ int crypt_cipher_decrypt_kernel(struct crypt_cipher_kernel *ctx,
 				const char *iv, size_t iv_length)
 {
 	return -EINVAL;
-}
-int crypt_cipher_check_kernel(const char *name, const char *mode,
-			      const char *integrity, size_t key_length)
-{
-	/* Cannot check, expect success. */
-	return 0;
 }
 int crypt_bitlk_decrypt_key_kernel(const void *key, size_t key_length,
 				   const char *in, char *out, size_t length,

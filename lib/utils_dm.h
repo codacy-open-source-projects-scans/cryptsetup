@@ -4,8 +4,8 @@
  *
  * Copyright (C) 2004 Jana Saout <jana@saout.de>
  * Copyright (C) 2004-2007 Clemens Fruhwirth <clemens@endorphin.org>
- * Copyright (C) 2009-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2009-2025 Milan Broz
+ * Copyright (C) 2009-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2009-2026 Milan Broz
  */
 
 #ifndef _UTILS_DM_H
@@ -67,6 +67,7 @@ static inline uint64_t act2dmflags(uint64_t act_flags)
 #define DM_CRYPT_INTEGRITY_KEY_SIZE_OPT_SUPPORTED (UINT64_C(1) << 30) /* dm-crypt support for integrity_key_size option */
 #define DM_VERITY_ERROR_AS_CORRUPTION_SUPPORTED (UINT64_C(1) << 31) /* dm-verity restart/panic on corruption supported */
 #define DM_INTEGRITY_INLINE_MODE_SUPPORTED (UINT64_C(1) << 32) /* dm-integrity inline mode supported */
+#define DM_INTEGRITY_DISCARD_KEYED_SUPPORTED (UINT64_C(1) << 33) /* dm-integrity discard keyed supported */
 
 typedef enum { DM_CRYPT = 0, DM_VERITY, DM_INTEGRITY, DM_LINEAR, DM_ERROR, DM_ZERO, DM_UNKNOWN } dm_target_type;
 enum tdirection { TARGET_EMPTY = 0, TARGET_SET, TARGET_QUERY };
@@ -147,6 +148,7 @@ struct dm_target {
 		bool fix_padding;
 		bool fix_hmac;
 		bool legacy_recalc;
+		bool discard_keyed;
 	} integrity;
 	struct {
 		uint64_t offset;
@@ -174,8 +176,7 @@ static inline bool single_segment(const struct crypt_dm_active_device *dmd)
 	return dmd && !dmd->segment.next;
 }
 
-void dm_backend_init(struct crypt_device *cd);
-void dm_backend_exit(struct crypt_device *cd);
+void dm_backend_exit(void);
 
 int dm_targets_allocate(struct dm_target *first, unsigned count);
 void dm_targets_free(struct crypt_device *cd, struct crypt_dm_active_device *dmd);
@@ -220,7 +221,7 @@ int dm_resume_and_reinstate_key(struct crypt_device *cd, const char *name,
 				const struct volume_key *vk);
 int dm_error_device(struct crypt_device *cd, const char *name);
 int dm_clear_device(struct crypt_device *cd, const char *name);
-int dm_cancel_deferred_removal(const char *name);
+int dm_cancel_deferred_removal(struct crypt_device *cd, const char *name);
 
 const char *dm_get_dir(void);
 int dm_get_iname(const char *name, char **iname, bool with_path);

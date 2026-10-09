@@ -2,9 +2,9 @@
 /*
  * cryptsetup library API check functions
  *
- * Copyright (C) 2009-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2009-2025 Milan Broz
- * Copyright (C) 2016-2025 Ondrej Kozina
+ * Copyright (C) 2009-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2009-2026 Milan Broz
+ * Copyright (C) 2016-2026 Ondrej Kozina
  */
 
 #ifndef API_TEST_H
@@ -155,5 +155,11 @@ int dmdevice_error_io(const char *dm_name,
 	uint64_t offset,
 	uint64_t length,
 	error_io_info ei);
+
+int decompress_missing_xz_image(const char *image);
+
+int untar_xz_archive_if_file_missing(const char *archive, const char *file);
+
+int untar_xz_archive_if_dir_missing(const char *archive, const char *dir);
 
 #endif

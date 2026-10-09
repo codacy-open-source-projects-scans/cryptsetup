@@ -2,8 +2,8 @@
 /*
  * LUKS - Linux Unified Key Setup v2, LUKS2 header format code
  *
- * Copyright (C) 2015-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2015-2025 Milan Broz
+ * Copyright (C) 2015-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2015-2026 Milan Broz
  */
 
 #include "luks2_internal.h"
@@ -224,8 +224,17 @@ int LUKS2_generate_hdr(
 	hdr->version = 2;
 	memset(hdr->label, 0, LUKS2_LABEL_L);
 	strcpy(hdr->checksum_alg, "sha256");
-	crypt_random_get(cd, (char*)hdr->salt1, LUKS2_SALT_L, CRYPT_RND_SALT);
-	crypt_random_get(cd, (char*)hdr->salt2, LUKS2_SALT_L, CRYPT_RND_SALT);
+
+	r = crypt_random_get(cd, (char*)hdr->salt1, LUKS2_SALT_L, CRYPT_RND_SALT);
+	if (r < 0) {
+		log_dbg(cd, "Cannot generate header salt.");
+		return r;
+	}
+	r = crypt_random_get(cd, (char*)hdr->salt2, LUKS2_SALT_L, CRYPT_RND_SALT);
+	if (r < 0) {
+		log_dbg(cd, "Cannot generate header salt.");
+		return r;
+	}
 
 	if (uuid && uuid_parse(uuid, partitionUuid) == -1) {
 		log_err(cd, _("Wrong LUKS UUID format provided."));

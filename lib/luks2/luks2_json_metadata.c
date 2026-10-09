@@ -2,9 +2,9 @@
 /*
  * LUKS - Linux Unified Key Setup v2
  *
- * Copyright (C) 2015-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2015-2025 Milan Broz
- * Copyright (C) 2015-2025 Ondrej Kozina
+ * Copyright (C) 2015-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2015-2026 Milan Broz
+ * Copyright (C) 2015-2026 Ondrej Kozina
  */
 
 #include "luks2_internal.h"
@@ -1398,31 +1398,23 @@ out:
 	return r;
 }
 
-int LUKS2_hdr_restore(struct crypt_device *cd, struct luks2_hdr *hdr,
-		     const char *backup_file)
+int LUKS2_hdr_restore(struct crypt_device *cd, struct luks2_hdr *hdr, struct device *backup_device)
 {
-	struct device *backup_device, *device = crypt_metadata_device(cd);
+	struct device *device = crypt_metadata_device(cd);
 	int r, fd, devfd = -1, diff_uuid = 0;
 	ssize_t ret, buffer_size = 0;
 	char *buffer = NULL, msg[1024];
 	struct luks2_hdr hdr_file = {}, tmp_hdr = {};
 	uint32_t reqs = 0;
 
-	r = device_alloc(cd, &backup_device, backup_file);
-	if (r < 0)
-		return r;
-
 	r = device_read_lock(cd, backup_device);
 	if (r) {
-		log_err(cd, _("Failed to acquire read lock on device %s."),
-			device_path(backup_device));
-		device_free(cd, backup_device);
+		log_err(cd, _("Failed to acquire read lock on device %s."), device_path(backup_device));
 		return r;
 	}
 
 	r = LUKS2_disk_hdr_read(cd, &hdr_file, backup_device, 0, 0);
 	device_read_unlock(cd, backup_device);
-	device_free(cd, backup_device);
 
 	if (r < 0) {
 		log_err(cd, _("Backup file does not contain valid LUKS header."));
@@ -1433,7 +1425,7 @@ int LUKS2_hdr_restore(struct crypt_device *cd, struct luks2_hdr *hdr,
 	if (LUKS2_unmet_requirements(cd, &hdr_file,
 	    CRYPT_REQUIREMENT_ONLINE_REENCRYPT | CRYPT_REQUIREMENT_INLINE_HW_TAGS, 1)) {
 		log_err(cd, _("Forbidden LUKS2 requirements detected in backup %s."),
-			backup_file);
+			device_path(backup_device));
 		r = -ETXTBSY;
 		goto out;
 	}
@@ -1445,17 +1437,17 @@ int LUKS2_hdr_restore(struct crypt_device *cd, struct luks2_hdr *hdr,
 		goto out;
 	}
 
-	fd = open(backup_file, O_RDONLY);
+	fd = device_open(cd, backup_device, O_RDONLY);
 	if (fd == -1) {
-		log_err(cd, _("Cannot open header backup file %s."), backup_file);
+		log_err(cd, _("Cannot open header backup file %s."), device_path(backup_device));
 		r = -EINVAL;
 		goto out;
 	}
 
-	ret = read_buffer(fd, buffer, buffer_size);
-	close(fd);
+	ret = read_lseek_blockwise(fd, device_block_size(cd, backup_device),
+				   device_alignment(backup_device), buffer, buffer_size, 0);
 	if (ret < buffer_size) {
-		log_err(cd, _("Cannot read header backup file %s."), backup_file);
+		log_err(cd, _("Cannot read header backup file %s."), device_path(backup_device));
 		r = -EIO;
 		goto out;
 	}
@@ -1704,7 +1696,7 @@ bool LUKS2_reencrypt_requirement_candidate(struct luks2_hdr *hdr)
 	return false;
 }
 
-int LUKS2_config_get_reencrypt_version(struct luks2_hdr *hdr, uint8_t *version)
+static int LUKS2_config_get_requirement_version(struct luks2_hdr *hdr, uint8_t *version, const char *name)
 {
 	json_object *jobj_mandatory, *jobj;
 	int i, len;
@@ -1712,6 +1704,7 @@ int LUKS2_config_get_reencrypt_version(struct luks2_hdr *hdr, uint8_t *version)
 
 	assert(hdr);
 	assert(version);
+	assert(name);
 
 	jobj_mandatory = mandatory_requirements_jobj(hdr);
 	if (!jobj_mandatory)
@@ -1724,8 +1717,8 @@ int LUKS2_config_get_reencrypt_version(struct luks2_hdr *hdr, uint8_t *version)
 	for (i = 0; i < len; i++) {
 		jobj = json_object_array_get_idx(jobj_mandatory, i);
 
-		/* search for requirements prefixed with "online-reencrypt" */
-		if (strncmp(json_object_get_string(jobj), "online-reencrypt", 16))
+		/* search for requirements prefixed with name */
+		if (strncmp(json_object_get_string(jobj), name, strlen(name)))
 			continue;
 
 		/* check current library is aware of the requirement */
@@ -1739,6 +1732,16 @@ int LUKS2_config_get_reencrypt_version(struct luks2_hdr *hdr, uint8_t *version)
 	}
 
 	return -ENOENT;
+}
+
+int LUKS2_config_get_reencrypt_version(struct luks2_hdr *hdr, uint8_t *version)
+{
+	return LUKS2_config_get_requirement_version(hdr, version, "online-reencrypt");
+}
+
+int LUKS2_config_get_opal_version(struct luks2_hdr *hdr, uint8_t *version)
+{
+	return LUKS2_config_get_requirement_version(hdr, version, "opal");
 }
 
 static const struct requirement_flag *stored_requirement_name_by_id(struct luks2_hdr *hdr, uint32_t req_id)
@@ -2149,7 +2152,8 @@ static void hdr_dump_segments(struct crypt_device *cd, json_object *hdr_jobj)
 
 		json_object_object_get_ex(jobj_segment, "type", &jobj1);
 		if (!strncmp(json_object_get_string(jobj1), "hw-opal", 7)) {
-			log_std(cd, "\tHW OPAL encryption:\n");
+			log_std(cd, "\tHW OPAL%s encryption:\n",
+				crypt_get_hw_opal_sum_enabled(cd) > 0 ? " (Single User Mode)" : "");
 			json_object_object_get_ex(jobj_segment, "opal_segment_number", &jobj1);
 			log_std(cd, "\t\tOPAL segment number: %" PRIu32 "\n", crypt_jobj_get_uint32(jobj1));
 			json_object_object_get_ex(jobj_segment, "opal_key_size", &jobj1);
@@ -2438,6 +2442,24 @@ int LUKS2_get_keyslot_stored_key_size(struct luks2_hdr *hdr, int keyslot)
 		return -1;
 
 	return LUKS2_keyslot_get_volume_key_size(hdr, keyslot_name);
+}
+
+int LUKS2_get_volume_key_size_by_digest(struct luks2_hdr *hdr, int digest)
+{
+	json_object *jobj_digest, *jobj_digest_keyslots;
+
+	jobj_digest = LUKS2_get_digest_jobj(hdr, digest);
+	if (!jobj_digest)
+		return -ENOENT;
+
+	if (!json_object_object_get_ex(jobj_digest, "keyslots", &jobj_digest_keyslots))
+		return -EINVAL;
+
+	if (json_object_array_length(jobj_digest_keyslots) <= 0)
+		return -ENOENT;
+
+	return LUKS2_keyslot_get_volume_key_size(hdr,
+			json_object_get_string(json_object_array_get_idx(jobj_digest_keyslots, 0)));
 }
 
 int LUKS2_get_volume_key_size(struct luks2_hdr *hdr, int segment)
@@ -2827,9 +2849,16 @@ static bool is_reencryption_helper(const char *name)
 		return false;
 
 	len = strlen(name);
-	return (len >= 9 && (!strncmp(name + len - 8, "-hotzone-", 9) ||
-			     !strcmp(name + len - 8, "-overlay")));
+	if (len > 8 && !strcmp(name + len - 8, "-overlay"))
+		return true;
 
+	if (len > 16 && !strcmp(name + len - 16, "-hotzone-forward"))
+		return true;
+
+	if (len > 17 && !strcmp(name + len - 17, "-hotzone-backward"))
+		return true;
+
+	return false;
 }
 
 static bool contains_reencryption_helper(char **names)

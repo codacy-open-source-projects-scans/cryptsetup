@@ -171,7 +171,7 @@ fi
 dnl ==========================================================================
 
 AM_GNU_GETTEXT([external],[need-ngettext])
-AM_GNU_GETTEXT_VERSION([0.18.3])
+AM_GNU_GETTEXT_REQUIRE_VERSION([0.19.8])
 
 dnl ==========================================================================
 
@@ -346,6 +346,7 @@ AC_DEFUN([CONFIGURE_OPENSSL], [
 	saved_LIBS=$LIBS
 	AC_CHECK_DECLS([OSSL_get_max_threads], [], [], [#include <openssl/thread.h>])
 	AC_CHECK_DECLS([OSSL_KDF_PARAM_ARGON2_VERSION], [use_internal_argon2=0], [], [#include <openssl/core_names.h>])
+	AC_CHECK_DECLS([OSSL_CIPHER_PARAM_XTS_STANDARD], [], [], [#include <openssl/core_names.h>])
 	LIBS=$saved_LIBS
 ])
 
@@ -741,6 +742,7 @@ case $with_crypto_backend in
 	openssl) PKGMODULES="$PKGMODULES openssl" ;;
 	nss)     PKGMODULES="$PKGMODULES nss" ;;
 	nettle)  PKGMODULES="$PKGMODULES nettle" ;;
+	mbedtls) PKGMODULES="$PKGMODULES mbedtls" ;;
 esac
 if test "x$enable_libargon2" = "xyes"; then
 	PKGMODULES="$PKGMODULES libargon2"

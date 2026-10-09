@@ -2,8 +2,8 @@
 /*
  * integritysetup - setup integrity protected volumes for dm-integrity
  *
- * Copyright (C) 2017-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2017-2025 Milan Broz
+ * Copyright (C) 2017-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2017-2026 Milan Broz
  */
 
 #include <uuid/uuid.h>
@@ -120,6 +120,7 @@ static int action_format(void)
 	char *integrity_key = NULL, *msg = NULL;
 	int r;
 	size_t signatures;
+	uint32_t flags = 0;
 
 	r = crypt_parse_hash_integrity_mode(ARG_STR(OPT_INTEGRITY_ID), integrity);
 	if (r < 0) {
@@ -195,10 +196,11 @@ static int action_format(void)
 	}
 
 	if (ARG_SET(OPT_INTEGRITY_LEGACY_PADDING_ID))
-		crypt_set_compatibility(cd, CRYPT_COMPAT_LEGACY_INTEGRITY_PADDING);
-
+		flags |= CRYPT_COMPAT_LEGACY_INTEGRITY_PADDING;
 	if (ARG_SET(OPT_INTEGRITY_LEGACY_HMAC_ID))
-		crypt_set_compatibility(cd, CRYPT_COMPAT_LEGACY_INTEGRITY_HMAC);
+		flags |= CRYPT_COMPAT_LEGACY_INTEGRITY_HMAC;
+	if (flags)
+		crypt_set_compatibility(cd, flags);
 
 	if (ARG_SET(OPT_INTEGRITY_INLINE_ID))
 		r = crypt_format_inline(cd, CRYPT_INTEGRITY, NULL, NULL, NULL,
@@ -318,7 +320,7 @@ static int action_open(void)
 		.journal_commit_time = ARG_SET(OPT_INTEGRITY_BITMAP_MODE_ID) ? ARG_UINT32(OPT_BITMAP_FLUSH_TIME_ID) : ARG_UINT32(OPT_JOURNAL_COMMIT_TIME_ID),
 		.buffer_sectors = ARG_UINT32(OPT_BUFFER_SECTORS_ID),
 	};
-	uint32_t activate_flags = 0;
+	uint32_t activate_flags = 0, flags = 0;
 	char integrity[MAX_CIPHER_LEN], journal_integrity[MAX_CIPHER_LEN], journal_crypt[MAX_CIPHER_LEN];
 	char *integrity_key = NULL;
 	int r;
@@ -362,7 +364,7 @@ static int action_open(void)
 	if (ARG_SET(OPT_INTEGRITY_RECALCULATE_RESET_ID))
 		activate_flags |= CRYPT_ACTIVATE_RECALCULATE_RESET;
 
-	if (ARG_SET(OPT_ALLOW_DISCARDS_ID))
+	if (ARG_SET(OPT_ALLOW_DISCARDS_ID) || ARG_SET(OPT_ALLOW_DISCARDS_KEYED_ID))
 		activate_flags |= CRYPT_ACTIVATE_ALLOW_DISCARDS;
 
 	if ((r = tools_check_newname(action_argv[1])))
@@ -381,8 +383,14 @@ static int action_open(void)
 		goto out;
 	}
 
+	/* Set in crypt_load according to superblock flag */
+	if (!ARG_SET(OPT_ALLOW_DISCARDS_KEYED_ID))
+		flags = crypt_get_compatibility(cd) & CRYPT_COMPAT_LEGACY_INTEGRITY_DISCARD;
+	if (ARG_SET(OPT_INTEGRITY_LEGACY_HMAC_ID))
+		flags |= CRYPT_COMPAT_LEGACY_INTEGRITY_HMAC;
 	if (ARG_SET(OPT_INTEGRITY_LEGACY_RECALC_ID))
-		crypt_set_compatibility(cd, CRYPT_COMPAT_LEGACY_INTEGRITY_RECALC);
+		flags |= CRYPT_COMPAT_LEGACY_INTEGRITY_RECALC;
+	crypt_set_compatibility(cd, flags);
 
 	r = crypt_activate_by_volume_key(cd, action_argv[1], integrity_key,
 					 ARG_UINT32(OPT_INTEGRITY_KEY_SIZE_ID), activate_flags);
@@ -513,9 +521,10 @@ static int action_status(void)
 			if (ip.journal_crypt)
 				log_std("  journal encryption: %s\n", ip.journal_crypt);
 		}
-		if (cad.flags & (CRYPT_ACTIVATE_ALLOW_DISCARDS))
+		if (cad.flags & CRYPT_ACTIVATE_ALLOW_DISCARDS)
 			log_std("  flags: %s\n",
-				(cad.flags & CRYPT_ACTIVATE_ALLOW_DISCARDS) ? "discards " : "");
+				(crypt_get_compatibility(cd) & CRYPT_COMPAT_LEGACY_INTEGRITY_DISCARD) ?
+				"discards" : "discards_keyed");
 	}
 out:
 	crypt_free(cd);
@@ -780,6 +789,10 @@ int main(int argc, const char **argv)
 
 	if (ARG_SET(OPT_INTEGRITY_INLINE_ID) && ARG_SET(OPT_DATA_DEVICE_ID))
 		usage(popt_context, EXIT_FAILURE, _("Inline mode cannot be combined with separate data device."),
+		      poptGetInvocationName(popt_context));
+
+	if (ARG_SET(OPT_ALLOW_DISCARDS_KEYED_ID) && !ARG_SET(OPT_INTEGRITY_KEY_FILE_ID))
+		usage(popt_context, EXIT_FAILURE, _("Keyed discards can be enabled only with keyed algorithms like HMAC."),
 		      poptGetInvocationName(popt_context));
 
 	if (ARG_SET(OPT_CANCEL_DEFERRED_ID) && ARG_SET(OPT_DEFERRED_ID))

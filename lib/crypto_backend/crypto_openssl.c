@@ -2,8 +2,8 @@
 /*
  * OPENSSL crypto backend implementation
  *
- * Copyright (C) 2010-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2010-2025 Milan Broz
+ * Copyright (C) 2010-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2010-2026 Milan Broz
  */
 
 #include <stdio.h>
@@ -393,11 +393,13 @@ int crypt_hash_final(struct crypt_hash *ctx, char *buffer, size_t length)
 	if (EVP_DigestFinal_ex(ctx->md, tmp, &tmp_len) != 1)
 		return -EINVAL;
 
+	if (tmp_len < length) {
+		crypt_backend_memzero(tmp, sizeof(tmp));
+		return -EINVAL;
+	}
+
 	crypt_backend_memcpy(buffer, tmp, length);
 	crypt_backend_memzero(tmp, sizeof(tmp));
-
-	if (tmp_len < length)
-		return -EINVAL;
 
 	if (crypt_hash_restart(ctx))
 		return -EINVAL;
@@ -478,7 +480,12 @@ int crypt_hmac_init(struct crypt_hmac **ctx, const char *name,
 		return -EINVAL;
 	}
 
-	HMAC_Init_ex(h->md, key, key_length, h->hash_id, NULL);
+	if (HMAC_Init_ex(h->md, key, key_length, h->hash_id, NULL) != 1) {
+		hash_id_free(h->hash_id);
+		HMAC_CTX_free(h->md);
+		free(h);
+		return -EINVAL;
+	}
 
 	h->hash_len = EVP_MD_size(h->hash_id);
 #endif
@@ -494,7 +501,8 @@ static int crypt_hmac_restart(struct crypt_hmac *ctx)
 	if (!ctx->md)
 		return -EINVAL;
 #else
-	HMAC_Init_ex(ctx->md, NULL, 0, ctx->hash_id, NULL);
+	if (HMAC_Init_ex(ctx->md, NULL, 0, ctx->hash_id, NULL) != 1)
+		return -EINVAL;
 #endif
 	return 0;
 }
@@ -504,8 +512,7 @@ int crypt_hmac_write(struct crypt_hmac *ctx, const char *buffer, size_t length)
 #if OPENSSL3_API
 	return EVP_MAC_update(ctx->md, (const unsigned char *)buffer, length) == 1 ? 0 : -EINVAL;
 #else
-	HMAC_Update(ctx->md, (const unsigned char *)buffer, length);
-	return 0;
+	return HMAC_Update(ctx->md, (const unsigned char *)buffer, length) == 1 ? 0 : -EINVAL;
 #endif
 }
 
@@ -526,13 +533,16 @@ int crypt_hmac_final(struct crypt_hmac *ctx, char *buffer, size_t length)
 	if (length > (size_t)ctx->hash_len)
 		return -EINVAL;
 
-	HMAC_Final(ctx->md, tmp, &tmp_len);
+	if (HMAC_Final(ctx->md, tmp, &tmp_len) != 1)
+		return -EINVAL;
 #endif
+	if (tmp_len < length) {
+		crypt_backend_memzero(tmp, sizeof(tmp));
+		return -EINVAL;
+	}
+
 	crypt_backend_memcpy(buffer, tmp, length);
 	crypt_backend_memzero(tmp, sizeof(tmp));
-
-	if (tmp_len < length)
-		return -EINVAL;
 
 	if (crypt_hmac_restart(ctx))
 		return -EINVAL;
@@ -606,6 +616,9 @@ static int openssl_pbkdf2(const char *password, size_t password_length,
 
 	/* OpenSSL2 has iteration as signed int, avoid overflow */
 	if (iterations > INT_MAX)
+		return -EINVAL;
+
+	if (password_length > INT_MAX || salt_length > INT_MAX || key_length > INT_MAX)
 		return -EINVAL;
 
 	r = PKCS5_PBKDF2_HMAC(password, (int)password_length, (const unsigned char *)salt,
@@ -703,20 +716,47 @@ static void _cipher_destroy(EVP_CIPHER_CTX **hd_enc, EVP_CIPHER_CTX **hd_dec, co
 	*cipher_type = NULL;
 }
 
+/*
+ * SM4-XTS can have two variants of tweak calculation:
+ *     "GB": GB/T 17964-2021 tweak multiplication
+ *   "IEEE": IEEE Std 1619-2007 tweak multiplication (as used by AES-XTS)
+ *
+ * "GB" is the default, but we need to use mode implemented by the kernel here (IEEE).
+ */
+static int _cipher_xts_ieee(EVP_CIPHER_CTX **hd_enc, EVP_CIPHER_CTX **hd_dec)
+{
+#if OPENSSL3_API && HAVE_DECL_OSSL_CIPHER_PARAM_XTS_STANDARD
+	OSSL_PARAM p[] = {
+		OSSL_PARAM_construct_utf8_string(OSSL_CIPHER_PARAM_XTS_STANDARD, CONST_CAST(char*)"IEEE", 0),
+		OSSL_PARAM_construct_end()
+	};
+
+	if (EVP_CIPHER_CTX_set_params(*hd_enc, p) != 1 ||
+	    EVP_CIPHER_CTX_set_params(*hd_dec, p) != 1)
+		return -EINVAL;
+#else
+	UNUSED(hd_enc);
+	UNUSED(hd_dec);
+#endif
+	return 0;
+}
+
 static int _cipher_init(EVP_CIPHER_CTX **hd_enc, EVP_CIPHER_CTX **hd_dec, const EVP_CIPHER **cipher_type, const char *name,
 			const char *mode, const void *key, size_t key_length, size_t *iv_length)
 {
 	char cipher_name[256];
 	const EVP_CIPHER *type;
 	int r, key_bits;
+	bool set_xts_ieee = false;
 
 	key_bits = key_length * 8;
 	if (!strcmp(mode, "xts"))
 		key_bits /= 2;
 
-	if ((!strcmp(name, "sm4")) && key_bits == 128)
+	if ((!strcmp(name, "sm4")) && key_bits == 128) {
+		set_xts_ieee = true;
 		r = snprintf(cipher_name, sizeof(cipher_name), "%s-%s", name, mode);
-	else
+	} else
 		r = snprintf(cipher_name, sizeof(cipher_name), "%s-%d-%s", name, key_bits, mode);
 	if (r < 0 || (size_t)r >= sizeof(cipher_name))
 		return -EINVAL;
@@ -741,6 +781,11 @@ static int _cipher_init(EVP_CIPHER_CTX **hd_enc, EVP_CIPHER_CTX **hd_dec, const 
 
 	if (EVP_EncryptInit_ex(*hd_enc, type, NULL, key, NULL) != 1 ||
 	    EVP_DecryptInit_ex(*hd_dec, type, NULL, key, NULL) != 1) {
+		_cipher_destroy(hd_enc, hd_dec, &type);
+		return -EINVAL;
+	}
+
+	if (set_xts_ieee && _cipher_xts_ieee(hd_enc, hd_dec) < 0) {
 		_cipher_destroy(hd_enc, hd_dec, &type);
 		return -EINVAL;
 	}
@@ -794,9 +839,12 @@ void crypt_cipher_destroy(struct crypt_cipher *ctx)
 }
 
 static int _cipher_encrypt(struct crypt_cipher *ctx, const unsigned char *in, unsigned char *out,
-			   int length, const unsigned char *iv, size_t iv_length)
+			   size_t length, const unsigned char *iv, size_t iv_length)
 {
 	int len;
+
+	if (length > INT_MAX)
+		return -EINVAL;
 
 	if (ctx->u.lib.iv_length != iv_length)
 		return -EINVAL;
@@ -804,7 +852,7 @@ static int _cipher_encrypt(struct crypt_cipher *ctx, const unsigned char *in, un
 	if (EVP_EncryptInit_ex(ctx->u.lib.hd_enc, NULL, NULL, NULL, iv) != 1)
 		return -EINVAL;
 
-	if (EVP_EncryptUpdate(ctx->u.lib.hd_enc, out, &len, in, length) != 1)
+	if (EVP_EncryptUpdate(ctx->u.lib.hd_enc, out, &len, in, (int)length) != 1)
 		return -EINVAL;
 
 	if (EVP_EncryptFinal(ctx->u.lib.hd_enc, out + len, &len) != 1)
@@ -814,9 +862,12 @@ static int _cipher_encrypt(struct crypt_cipher *ctx, const unsigned char *in, un
 }
 
 static int _cipher_decrypt(struct crypt_cipher *ctx, const unsigned char *in, unsigned char *out,
-			   int length, const unsigned char *iv, size_t iv_length)
+			   size_t length, const unsigned char *iv, size_t iv_length)
 {
 	int len;
+
+	if (length > INT_MAX)
+		return -EINVAL;
 
 	if (ctx->u.lib.iv_length != iv_length)
 		return -EINVAL;
@@ -824,7 +875,7 @@ static int _cipher_decrypt(struct crypt_cipher *ctx, const unsigned char *in, un
 	if (EVP_DecryptInit_ex(ctx->u.lib.hd_dec, NULL, NULL, NULL, iv) != 1)
 		return -EINVAL;
 
-	if (EVP_DecryptUpdate(ctx->u.lib.hd_dec, out, &len, in, length) != 1)
+	if (EVP_DecryptUpdate(ctx->u.lib.hd_dec, out, &len, in, (int)length) != 1)
 		return -EINVAL;
 
 	if (EVP_DecryptFinal(ctx->u.lib.hd_dec, out + len, &len) != 1)

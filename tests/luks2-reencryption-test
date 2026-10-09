@@ -164,6 +164,10 @@ skip()
 
 fips_mode()
 {
+	if [ ! -x ./crypto-check ]; then
+		echo "WARNING: Cannot find crypto-check helper, expecting non-FIPS mode."
+		return 1
+	fi
 	./crypto-check fips_mode || ./crypto-check fips_mode_kernel
 }
 
@@ -2148,6 +2152,23 @@ $CRYPTSETUP luksDump $DEV | grep -q "online-reencrypt" && fail
 # check cli removed all unbound keyslots created in-before reencryption initialization
 $CRYPTSETUP luksDump $DEV | grep -q "unbound" && fail
 
+echo $PWD1 | $CRYPTSETUP -q luksFormat --type luks2 --offset 32768 -S0 $FAST_PBKDF_ARGON $DEV || fail
+KS=1
+while [ $KS -le 16 ]; do
+	echo -e "$PWD1\n$PWD1" | $CRYPTSETUP luksAddKey -S$KS $DEV -q $FAST_PBKDF_ARGON || fail
+	KS=$((KS+1))
+done
+# TODO: test compiled with e.g.: -fsanitize=address -fsanitize=undefined -fsanitize=bounds-strict -fno-omit-frame-pointer
+echo -e "$PWD1\n$PWD1\n$PWD1\n$PWD1\n$PWD1\n$PWD1\n$PWD1\n$PWD1\n$PWD1\n$PWD1\n$PWD1\n$PWD1\n$PWD1\n$PWD1\n$PWD1\n$PWD1\n$PWD1" | $CRYPTSETUP reencrypt $DEV -q 2>/dev/null && fail
+
+TK=0
+while [ $TK -le 16 ]; do
+	$CRYPTSETUP token add --key-description "aaa" -S $TK --token-id $TK $DEV || fail
+	TK=$((TK+1))
+done
+# TODO: test compiled with e.g.: -fsanitize=address -fsanitize=undefined -fsanitize=bounds-strict -fno-omit-frame-pointer
+$CRYPTSETUP reencrypt $DEV --token-only -q 2>/dev/null && fail
+
 echo "[23] Reencryption with specified new volume key"
 prepare dev_size_mb=32
 echo $PWD1 | $CRYPTSETUP -q luksFormat --type luks2 -s 256 -c aes-cbc-essiv:sha256 --offset 8192 $FAST_PBKDF_ARGON $DEV || fail
@@ -2948,18 +2969,15 @@ $CRYPTSETUP close $DEV_NAME || fail
 
 # test b0rked kernel keys
 reformat_reencrypt_device
-$CRYPTSETUP -q luksErase $DEV || fail
+# erase all but one keyslot so that we verify original volume key size
+$CRYPTSETUP luksKillSlot -q $DEV 4 || fail
+$CRYPTSETUP luksKillSlot -q $DEV 6 || fail
+$CRYPTSETUP luksKillSlot -q $DEV 8 || fail
+$CRYPTSETUP luksKillSlot -q $DEV 10 || fail
+$CRYPTSETUP luksKillSlot -q $DEV 12 || fail
 
-# run the test with additional debug output
-echo "Key before truncate:"
-keyctl describe %user:$KEY_NAME_VK2
-keyctl print %user:$KEY_NAME_VK2
 head -c 63 $VKEY2 | keyctl padd user $KEY_NAME_VK2 %:$KEYRING > /dev/null || fail
-echo "Key after truncate:"
-keyctl describe %user:$KEY_NAME_VK2
-keyctl print %user:$KEY_NAME_VK2
-$CRYPTSETUP -q reencrypt --init-only --volume-key-keyring $KEY_NAME_VK2 --new-volume-key-keyring $KEY_NAME_VK1 $DEV --debug <&- && fail
-#$CRYPTSETUP -q reencrypt --init-only --volume-key-keyring $KEY_NAME_VK2 --new-volume-key-keyring $KEY_NAME_VK1 $DEV <&- 2>/dev/null && fail
+$CRYPTSETUP -q reencrypt --init-only --volume-key-keyring $KEY_NAME_VK2 --new-volume-key-keyring $KEY_NAME_VK1 $DEV <&- 2>/dev/null && fail
 $CRYPTSETUP luksDump $DEV | grep -q "online-reencrypt" && fail "Failed initialization with reencryption flag"
 
 head -c 64 $VKEY2 | keyctl padd user $KEY_NAME_VK2 %:$KEYRING > /dev/null || fail

@@ -2,9 +2,9 @@
 /*
  * cryptsetup library API check functions
  *
- * Copyright (C) 2009-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2009-2025 Milan Broz
- * Copyright (C) 2016-2025 Ondrej Kozina
+ * Copyright (C) 2009-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2009-2026 Milan Broz
+ * Copyright (C) 2016-2026 Ondrej Kozina
  */
 
 #include <stdlib.h>
@@ -196,6 +196,7 @@ static void _cleanup(void)
 
 	_system("rm -f " IMAGE_EMPTY, 0);
 	_system("rm -f " IMAGE1, 0);
+	_system("rm -rf tcrypt-images", 0);
 
 	if (test_loop_file)
 		remove(test_loop_file);
@@ -261,7 +262,8 @@ static int _setup(void)
 	_system("dmsetup create " DEVICE_EMPTY_name " --table \"0 10000 zero\"", 1);
 	_system("dmsetup create " DEVICE_ERROR_name " --table \"0 10000 error\"", 1);
 
-	_system(" [ ! -e " IMAGE1 " ] && xz -dk " IMAGE1 ".xz", 1);
+	if (decompress_missing_xz_image(IMAGE1))
+		return 1;
 	fd = loop_attach(&DEVICE_1, IMAGE1, 0, 0, &ro);
 	close(fd);
 
@@ -270,22 +272,29 @@ static int _setup(void)
 	close(fd);
 
 	/* Keymaterial offset is less than 8 sectors */
-	_system(" [ ! -e " EVL_HEADER_1 " ] && xz -dk " EVL_HEADER_1 ".xz", 1);
+	if (decompress_missing_xz_image(EVL_HEADER_1))
+		return 1;
 	/* keymaterial offset aims into payload area */
-	_system(" [ ! -e " EVL_HEADER_2 " ] && xz -dk " EVL_HEADER_2 ".xz", 1);
+	if (decompress_missing_xz_image(EVL_HEADER_2))
+		return 1;
 	/* keymaterial offset is valid, number of stripes causes payload area to be overwritten */
-	_system(" [ ! -e " EVL_HEADER_3 " ] && xz -dk " EVL_HEADER_3 ".xz", 1);
+	if (decompress_missing_xz_image(EVL_HEADER_3))
+		return 1;
 	/* luks device header for data and header on same device. payloadOffset is greater than
 	 * device size (crypt_load() test) */
-	_system(" [ ! -e " EVL_HEADER_4 " ] && xz -dk " EVL_HEADER_4 ".xz", 1);
+	if (decompress_missing_xz_image(EVL_HEADER_4))
+		return 1;
 	 /* two keyslots with same offset (overlapping keyslots) */
-	_system(" [ ! -e " EVL_HEADER_5 " ] && xz -dk " EVL_HEADER_5 ".xz", 1);
+	if (decompress_missing_xz_image(EVL_HEADER_5))
+		return 1;
 	/* valid header: payloadOffset=4096, key_size=32,
 	 * volume_key = bb21158c733229347bd4e681891e213d94c685be6a5b84818afe7a78a6de7a1a */
-	_system(" [ ! -e " VALID_HEADER " ] && xz -dk " VALID_HEADER ".xz", 1);
+	if (decompress_missing_xz_image(VALID_HEADER))
+		return 1;
 
 	/* Prepare tcrypt images */
-	_system("tar xJf tcrypt-images.tar.xz 2>/dev/null", 1);
+	if (untar_xz_archive_if_dir_missing( "tcrypt-images" /* .tar.xz */, "tcrypt-images"))
+		return 1;
 
 	_system("modprobe dm-crypt >/dev/null 2>&1", 0);
 	_system("modprobe dm-verity >/dev/null 2>&1", 0);
@@ -2373,6 +2382,85 @@ static void VolumeKeyGet(void)
 	_cleanup_dmdevices();
 }
 
+static void TruncatedKeys(void)
+{
+	enum { OFFSET_1M = 2048 };
+	struct crypt_params_luks1 params = {
+		.hash = "sha256",
+		.data_alignment = OFFSET_1M, // 4M, data offset will be 4096
+	};
+	const struct crypt_pbkdf_type fast_pbkdf = {
+		.type = "pbkdf2",
+		.hash = "sha256",
+		.iterations = 1000,
+		.flags = CRYPT_PBKDF_NO_BENCHMARK
+	};
+	char key[64], key2[64];
+
+	const char *passphrase = PASSPHRASE;
+
+	/* test key with trailing zero bytes susceptible to padding conflict in pbkdf2(hmac) */
+	const char *vk_hex  = "bb21158c733229347bd4e681891e213d94c685be6a5b84818afe7a78a6de7a00";
+	const char *vk_hex2 = "bb21158c733229347bd4e681891e213d00000000000000000000000000000000";
+	size_t key_size = strlen(vk_hex) / 2;
+	const char *cipher = "aes";
+	const char *cipher_mode = "cbc-essiv:sha256";
+	uint64_t r_payload_offset, r_header_size;
+
+	OK_(crypt_decode_key(key,  vk_hex,  key_size));
+	OK_(crypt_decode_key(key2, vk_hex2, key_size));
+
+	// init test devices
+	OK_(get_luks_offsets(0, key_size, params.data_alignment, 0, &r_header_size, &r_payload_offset));
+	OK_(create_dmdevice_over_loop(H_DEVICE, r_payload_offset + 1));
+
+	// format with key containing last trailing zero byte
+	OK_(crypt_init(&cd, DMDIR H_DEVICE));
+	OK_(crypt_set_pbkdf_type(cd, &fast_pbkdf));
+	OK_(crypt_format(cd, CRYPT_LUKS1, cipher, cipher_mode, NULL, key, key_size, &params));
+	// the truncated key (cut off zero byte) must not pass verification
+	FAIL_(crypt_volume_key_verify(cd, key, key_size - 1), "Key does not match the volume.");
+	FAIL_(crypt_keyslot_add_by_volume_key(cd, CRYPT_ANY_SLOT, key, key_size - 1, passphrase, strlen(passphrase)), "Key does not match the volume.");
+	CRYPT_FREE(cd);
+
+	// same test as above, but with cached volume key dropped
+	OK_(crypt_init(&cd, DMDIR H_DEVICE));
+	OK_(crypt_load(cd, CRYPT_LUKS1, NULL));
+	// the truncated key (cut off zero byte) must not pass verification
+	FAIL_(crypt_volume_key_verify(cd, key, key_size - 1), "Key does not match the volume.");
+	FAIL_(crypt_keyslot_add_by_volume_key(cd, CRYPT_ANY_SLOT, key, key_size - 1, passphrase, strlen(passphrase)), "Key does not match the volume.");
+	// no need to test activation since AES will not accept short keys
+	CRYPT_FREE(cd);
+
+	/*
+	 * Format with key in second half containing only zero bytes.
+	 * Due to hmac zero padding of messages shorter than internal hash block size,
+	 * we could use only first half of the key, pass the verification and upload
+	 * the key in dm-crypt successfully. We pass 128 bits instead of 256 bits used
+	 * in crypt_format().
+	 */
+	OK_(crypt_init(&cd, DMDIR H_DEVICE));
+	OK_(crypt_set_pbkdf_type(cd, &fast_pbkdf));
+	OK_(crypt_format(cd, CRYPT_LUKS1, cipher, cipher_mode, NULL, key2, key_size, &params));
+	// the truncated key (cut off zero byte) must not pass verification
+	FAIL_(crypt_volume_key_verify(cd, key2, key_size / 2), "Key does not match the volume.");
+	FAIL_(crypt_keyslot_add_by_volume_key(cd, CRYPT_ANY_SLOT, key2, key_size / 2, passphrase, strlen(passphrase)), "Key does not match the volume.");
+	// activation must fail
+	FAIL_(crypt_activate_by_volume_key(cd, CDEVICE_1, key2, key_size / 2, 0), "Key does not match the volume.");
+	CRYPT_FREE(cd);
+
+	// same test as above, but with cached volume key dropped
+	OK_(crypt_init(&cd, DMDIR H_DEVICE));
+	OK_(crypt_load(cd, CRYPT_LUKS1, NULL));
+	FAIL_(crypt_volume_key_verify(cd, key2, key_size / 2), "Key does not match the volume.");
+	FAIL_(crypt_keyslot_add_by_volume_key(cd, CRYPT_ANY_SLOT, key2, key_size / 2, passphrase, strlen(passphrase)), "Key does not match the volume.");
+	FAIL_(crypt_activate_by_volume_key(cd, CDEVICE_1, key2, key_size / 2, 0), "Key does not match the volume.");
+	CRYPT_FREE(cd);
+
+	_remove_keyfiles();
+	_cleanup_dmdevices();
+}
+
 // Check that gcrypt is properly initialised in format
 static void NonFIPSAlg(void)
 {
@@ -2469,6 +2557,7 @@ int main(int argc, char *argv[])
 	RUN_(WipeTest, "Wipe device");
 	RUN_(LuksKeyslotAdd, "Adding keyslot via new API");
 	RUN_(VolumeKeyGet, "Getting volume key via keyslot context API");
+	RUN_(TruncatedKeys, "Test truncated candidate keys.");
 
 	_cleanup();
 	return 0;

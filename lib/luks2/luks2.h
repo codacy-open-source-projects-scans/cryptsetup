@@ -2,8 +2,8 @@
 /*
  * LUKS - Linux Unified Key Setup v2
  *
- * Copyright (C) 2015-2025 Red Hat, Inc. All rights reserved.
- * Copyright (C) 2015-2025 Milan Broz
+ * Copyright (C) 2015-2026 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2015-2026 Milan Broz
  */
 
 #ifndef _CRYPTSETUP_LUKS2_ONDISK_H
@@ -155,8 +155,7 @@ struct luks2_keyslot_params {
 #define LUKS2_HDR2_OFFSETS { 0x04000, 0x008000, 0x010000, 0x020000, \
                              0x40000, 0x080000, 0x100000, 0x200000, LUKS2_HDR_OFFSET_MAX }
 
-int LUKS2_hdr_version_unlocked(struct crypt_device *cd,
-	const char *backup_file);
+int LUKS2_hdr_version_unlocked(struct crypt_device *cd, struct device *backup_device);
 
 int LUKS2_hdr_read(struct crypt_device *cd, struct luks2_hdr *hdr, int repair);
 int LUKS2_hdr_write(struct crypt_device *cd, struct luks2_hdr *hdr);
@@ -182,7 +181,7 @@ int LUKS2_hdr_backup(struct crypt_device *cd,
 		     const char *backup_file);
 int LUKS2_hdr_restore(struct crypt_device *cd,
 		      struct luks2_hdr *hdr,
-		      const char *backup_file);
+		      struct device *backup_device);
 
 uint64_t LUKS2_hdr_and_areas_size(struct luks2_hdr *hdr);
 uint64_t LUKS2_keyslots_size(struct luks2_hdr *hdr);
@@ -319,7 +318,8 @@ void crypt_token_unload_external_all(struct crypt_device *cd);
  * Generic LUKS2 digest
  */
 int LUKS2_digest_verify_by_any_matching(struct crypt_device *cd,
-		const struct volume_key *vk);
+		const struct volume_key *vk,
+		bool exclude_default_segment);
 
 int LUKS2_digest_verify_by_segment(struct crypt_device *cd,
 	struct luks2_hdr *hdr,
@@ -445,6 +445,7 @@ int LUKS2_config_set_requirements(struct crypt_device *cd, struct luks2_hdr *hdr
 int LUKS2_config_set_requirement_version(struct crypt_device *cd, struct luks2_hdr *hdr, uint32_t req_id, uint8_t req_version, bool commit);
 
 int LUKS2_config_get_reencrypt_version(struct luks2_hdr *hdr, uint8_t *version);
+int LUKS2_config_get_opal_version(struct luks2_hdr *hdr, uint8_t *version);
 
 bool LUKS2_reencrypt_requirement_candidate(struct luks2_hdr *hdr);
 
